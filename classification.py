@@ -126,8 +126,8 @@ if __name__ == '__main__':
                         help='Dataset to use')
     """
     
-    parser.add_argument('-d', '--dataset', choices=['M2OR'], default='M2OR',
-                        help='Dataset to use (only M2OR so far, will add GS_LF soon)')
+    parser.add_argument('-d', '--dataset', choices=['M2OR', 'GS_LF'], default='M2OR',
+                        help='Dataset to use (only M2OR and GS_LF are supported)')
     
     
     parser.add_argument('-mo', '--model', choices=['GCN', 'GAT', 'Weave', 'MPNN', 'AttentiveFP',
@@ -181,6 +181,10 @@ if __name__ == '__main__':
         dataset = M2OR(smiles_to_graph=smiles_to_g, 
                     n_jobs=1 if args['num_workers'] == 0 else args['num_workers'],
                     preprocess=args['preprocess'])
+    elif args['dataset'] == 'GS_LF':
+        from data.m2or import GS_LF
+        dataset = GS_LF(smiles_to_graph=smiles_to_g,
+                    n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
     
     """
     if args['dataset'] == 'MUV':

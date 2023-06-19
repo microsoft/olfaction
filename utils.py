@@ -10,7 +10,7 @@ import os
 import torch
 import torch.nn.functional as F
 
-from dgllife.utils import ScaffoldSplitter, RandomSplitter
+
 
 def init_featurizer(args):
     """Initialize node/edge featurizer
@@ -92,6 +92,7 @@ def split_dataset(args, dataset):
     test_set
         Test subset
     """
+    from dgllife.utils import ScaffoldSplitter, RandomSplitter
     train_ratio, val_ratio, test_ratio = map(float, args['split_ratio'].split(','))
     if args['split'] == 'scaffold':
         train_set, val_set, test_set = ScaffoldSplitter.train_val_test_split(
