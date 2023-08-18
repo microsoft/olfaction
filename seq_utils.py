@@ -15,6 +15,19 @@ def tanimoto_similarity(ind_SMILES, canonical_SMILES):
             tanimoto_sim.append([None for can_smi in canonical_SMILES])
     return tanimoto_sim
 
+def generate_edlib_edit_distance_matrix(sequences):
+    ## initialize empty 2d Numpy array with size (len(sequences), len(sequences))
+    import numpy as np
+    import edlib
+    edlib_matrix = np.empty((len(sequences), len(sequences)), dtype=np.int32)
+    
+    for i, seq1 in enumerate(sequences):
+        assert isinstance(seq1, str), "All sequences must be strings."
+        for j, seq2 in enumerate(sequences):
+            edlib_matrix[i][j] = edlib.align(seq1, seq2)['editDistance']
+    
+    return edlib_matrix
+
 def generate_edit_distance_matrix(sequences):
     """Generate edit distance matrix of protein sequences with varying lengths.
 

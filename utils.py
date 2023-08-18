@@ -9,8 +9,7 @@ import json
 import os
 import torch
 import torch.nn.functional as F
-
-
+import numpy as np
 
 def init_featurizer(args):
     """Initialize node/edge featurizer
@@ -101,6 +100,19 @@ def split_dataset(args, dataset):
     elif args['split'] == 'random':
         train_set, val_set, test_set = RandomSplitter.train_val_test_split(
             dataset, frac_train=train_ratio, frac_val=val_ratio, frac_test=test_ratio, random_state = 42)
+    elif args['split'] == 'iterative_stratification':
+        print('Using iterative stratification')
+        from skmultilearn.model_selection import IterativeStratification
+        from dgl.data.utils import Subset
+        import numpy as np
+        np.random.RandomState(42)
+        stratifier = IterativeStratification(n_splits= 2, order = 2, sample_distribution_per_fold=[0.2, 0.8])
+        train_indices, orig_test_indices = next(stratifier.split(dataset.smiles, dataset.labels))
+        test_smiles = [dataset.smiles[i] for i in orig_test_indices]        ##Subset(dataset, indices[offset - length : offset])
+        stratifier = IterativeStratification(n_splits= 2, order = 2, sample_distribution_per_fold=[0.5, 0.5])
+        rel_val_indices, rel_test_indices = next(stratifier.split(test_smiles, dataset.labels[orig_test_indices]))
+        val_indices, test_indices = orig_test_indices[rel_val_indices], orig_test_indices[rel_test_indices]        
+        train_set, val_set, test_set = Subset(dataset, train_indices), Subset(dataset, val_indices), Subset(dataset, test_indices)
     else:
         return ValueError("Expect the splitting method to be 'scaffold', got {}".format(args['split']))
 
@@ -127,7 +139,8 @@ def get_configure(model, featurizer_type, dataset):
         with open('data/configures/{}/{}.json'.format(dataset, model), 'r') as f:
             config = json.load(f)
     else:
-        file_path = 'data/configures/{}/{}_{}.json'.format(dataset, model, featurizer_type)
+        file_path = '/home/t-seyonec/olfaction/data/configures/{}/{}_{}.json'.format(dataset, model, featurizer_type)
+        print(file_path)
         if not os.path.isfile(file_path):
             return NotImplementedError('Model {} on dataset {} with featurization {} has not been '
                                        'supported'.format(model, dataset, featurizer_type))
@@ -159,8 +172,15 @@ def collate_molgraphs(data):
         Batched datapoint binary mask, indicating the
         existence of labels.
     """
+    ids, seq_ids, sequences_dict, seq_embeddings = None, None, None, None
     if len(data[0]) == 3:
         smiles, graphs, labels = map(list, zip(*data))
+    elif len(data[0]) == 6:
+        smiles, graphs, labels, masks, ids, node_mask = map(list, zip(*data))
+    elif len(data[0]) == 9:
+        smiles, graphs, labels, masks, ids, seq_ids, sequences_dict, seq_embeddings, sample_weights = map(list, zip(*data))
+    elif len(data[0]) == 11:
+        smiles, graphs, labels, masks, ids, seq_ids, sequences_dict, seq_embeddings, sample_weights, seq_mask, node_mask = map(list, zip(*data))
     else:
         smiles, graphs, labels, masks = map(list, zip(*data))
 
@@ -173,7 +193,27 @@ def collate_molgraphs(data):
         masks = torch.ones(labels.shape)
     else:
         masks = torch.stack(masks, dim=0)
+    
+    if len(data[0]) == 9:
+        seq_emb_arr = np.dstack(seq_embeddings)
+        seq_embeddings = torch.FloatTensor(np.rollaxis(seq_emb_arr, -1))#.cuda()
+        sample_weights = torch.tensor(sample_weights).reshape(-1,1)
+        return smiles, bg, labels, masks, ids, seq_ids, sequences_dict, seq_embeddings, sample_weights
+    elif len(data[0]) == 6:        
+        node_mask = np.vstack(node_mask)
+        node_mask = torch.FloatTensor(node_mask)#.cuda()
+        return smiles, bg, labels, masks, ids, node_mask
+    elif len(data[0]) == 11:
+        seq_emb_arr = np.dstack(seq_embeddings)
+        seq_embeddings = torch.FloatTensor(np.rollaxis(seq_emb_arr, -1))#.cuda()
+        seq_mask = np.vstack(seq_mask)
+        seq_mask = torch.FloatTensor(seq_mask)#.cuda()
+        
+        node_mask = np.vstack(node_mask)
+        node_mask = torch.FloatTensor(node_mask)#.cuda()
+        sample_weights = torch.tensor(sample_weights).reshape(-1,1)
 
+        return smiles, bg, labels, masks, ids, seq_ids, sequences_dict, seq_embeddings, sample_weights, seq_mask, node_mask
     return smiles, bg, labels, masks
 
 def load_model(exp_configure):
@@ -184,6 +224,66 @@ def load_model(exp_configure):
             hidden_feats=[exp_configure['gnn_hidden_feats']] * exp_configure['num_gnn_layers'],
             activation=[F.relu] * exp_configure['num_gnn_layers'],
             residual=[exp_configure['residual']] * exp_configure['num_gnn_layers'],
+            batchnorm=[exp_configure['batchnorm']] * exp_configure['num_gnn_layers'],
+            dropout=[exp_configure['dropout']] * exp_configure['num_gnn_layers'],
+            predictor_hidden_feats=exp_configure['predictor_hidden_feats'],
+            predictor_dropout=exp_configure['dropout'],
+            n_tasks=exp_configure['n_tasks'])
+    elif exp_configure['model'] == 'GCN_OR':
+        from gcn_or_predictor import GCNORPredictor
+        model = GCNORPredictor(
+            in_feats=exp_configure['in_node_feats'],
+            hidden_feats=[exp_configure['gnn_hidden_feats']] * exp_configure['num_gnn_layers'],
+            activation=[F.relu] * exp_configure['num_gnn_layers'],
+            add_feats=exp_configure['add_feat_size'],
+            residual=[exp_configure['residual']] * exp_configure['num_gnn_layers'],
+            batchnorm=[exp_configure['batchnorm']] * exp_configure['num_gnn_layers'],
+            dropout=[exp_configure['dropout']] * exp_configure['num_gnn_layers'],
+            predictor_hidden_feats=exp_configure['predictor_hidden_feats'],
+            predictor_dropout=exp_configure['dropout'],
+            n_tasks=exp_configure['n_tasks'])
+    elif exp_configure['model'] == 'GCN_joint':
+        from gcn_or_predictor import GCNJointPredictor
+        model = GCNJointPredictor(
+            in_feats=exp_configure['in_node_feats'],
+            hidden_feats=[exp_configure['gnn_hidden_feats']] * exp_configure['num_gnn_layers'],
+            activation=[F.relu] * exp_configure['num_gnn_layers'],
+            add_feats=exp_configure['pass_add_feat'],
+            residual=[exp_configure['residual']] * exp_configure['num_gnn_layers'],
+            batchnorm=[exp_configure['batchnorm']] * exp_configure['num_gnn_layers'],
+            dropout=[exp_configure['dropout']] * exp_configure['num_gnn_layers'],
+            predictor_hidden_feats=exp_configure['predictor_hidden_feats'],
+            predictor_dropout=exp_configure['dropout'],
+            n_tasks=exp_configure['n_tasks'])
+    elif exp_configure['model'] == 'MolOR': ## cross attention model for OR prediction
+        from gcn_or_predictor import MolORPredictor
+        model = MolORPredictor(
+            in_feats=exp_configure['in_node_feats'],
+            hidden_feats=[exp_configure['gnn_hidden_feats']] * exp_configure['num_gnn_layers'],
+            activation=[F.relu] * exp_configure['num_gnn_layers'],
+            add_feats=exp_configure['add_feat_size'],
+            prot_feats=exp_configure['add_feat_size'],
+            residual=[exp_configure['residual']] * exp_configure['num_gnn_layers'],
+            mol2_prot=exp_configure['mol2prot_dim'],
+            max_seq_len=exp_configure['max_seq_len'],
+            max_node_len=exp_configure['max_node_len'],
+            batchnorm=[exp_configure['batchnorm']] * exp_configure['num_gnn_layers'],
+            dropout=[exp_configure['dropout']] * exp_configure['num_gnn_layers'],
+            predictor_hidden_feats=exp_configure['predictor_hidden_feats'],
+            predictor_dropout=exp_configure['dropout'],
+            n_tasks=exp_configure['n_tasks'])
+    elif exp_configure['model'] == 'MolOR_Joint':
+        from gcn_or_predictor import Mol_JointPredictor
+        model = Mol_JointPredictor(
+            in_feats=exp_configure['in_node_feats'],
+            hidden_feats=[exp_configure['gnn_hidden_feats']] * exp_configure['num_gnn_layers'],
+            activation=[F.relu] * exp_configure['num_gnn_layers'],
+            add_feats=exp_configure['add_feat_size'],
+            prot_feats=exp_configure['add_feat_size'],
+            residual=[exp_configure['residual']] * exp_configure['num_gnn_layers'],
+            mol2_prot=exp_configure['mol2prot_dim'],
+            max_seq_len=exp_configure['max_seq_len'],
+            max_node_len=exp_configure['max_node_len'],
             batchnorm=[exp_configure['batchnorm']] * exp_configure['num_gnn_layers'],
             dropout=[exp_configure['dropout']] * exp_configure['num_gnn_layers'],
             predictor_hidden_feats=exp_configure['predictor_hidden_feats'],
@@ -277,6 +377,32 @@ def predict(args, model, bg):
     bg = bg.to(args['device'])
     if args['edge_featurizer'] is None:
         node_feats = bg.ndata.pop('h').to(args['device'])
+        return model(bg, node_feats)
+    elif args['featurizer_type'] == 'pre_train':
+        node_feats = [
+            bg.ndata.pop('atomic_number').to(args['device']),
+            bg.ndata.pop('chirality_type').to(args['device'])
+        ]
+        edge_feats = [
+            bg.edata.pop('bond_type').to(args['device']),
+            bg.edata.pop('bond_direction_type').to(args['device'])
+        ]
+        return model(bg, node_feats, edge_feats)
+    else:
+        node_feats = bg.ndata.pop('h').to(args['device'])
+        edge_feats = bg.edata.pop('e').to(args['device'])
+        return model(bg, node_feats, edge_feats)
+    
+def predict_OR_feat(args, model, bg, add_feat = None, seq_mask = None, node_mask = None):
+    bg = bg.to(args['device'])
+    if args['edge_featurizer'] is None:
+        node_feats = bg.ndata.pop('h').to(args['device'])
+        if add_feat is not None:
+            #print(node_feats) - good here
+            if seq_mask is None and node_mask is None: ## OR logits or ESM fixed-vector emb
+                return model(bg, node_feats, add_feat)
+            else: ## cross-attention forward pass
+                return model(bg, node_feats, add_feat, seq_mask, node_mask)
         return model(bg, node_feats)
     elif args['featurizer_type'] == 'pre_train':
         node_feats = [

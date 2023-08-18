@@ -69,6 +69,8 @@ def main(args, exp_config, train_set, val_set, test_set):
                             collate_fn=collate_molgraphs, num_workers=args['num_workers'])
     test_loader = DataLoader(dataset=test_set, batch_size=exp_config['batch_size'],
                              collate_fn=collate_molgraphs, num_workers=args['num_workers'])
+    
+    exp_config['add_feat_size'] = args['add_feat_size']
 
     if args['pretrain']:
         args['num_epochs'] = 0
@@ -126,11 +128,11 @@ if __name__ == '__main__':
                         help='Dataset to use')
     """
     
-    parser.add_argument('-d', '--dataset', choices=['M2OR', 'GS_LF'], default='M2OR',
+    parser.add_argument('-d', '--dataset', choices=['M2OR', 'GS_LF', 'M2OR_Pairs'], default='M2OR',
                         help='Dataset to use (only M2OR and GS_LF are supported)')
     
     
-    parser.add_argument('-mo', '--model', choices=['GCN', 'GAT', 'Weave', 'MPNN', 'AttentiveFP',
+    parser.add_argument('-mo', '--model', choices=['GCN', 'GAT', 'GCN_OR', 'Weave', 'MPNN', 'AttentiveFP',
                                                    'gin_supervised_contextpred',
                                                    'gin_supervised_infomax',
                                                    'gin_supervised_edgepred',
@@ -140,13 +142,15 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--featurizer-type', choices=['canonical', 'attentivefp'],
                         help='Featurization for atoms (and bonds). This is required for models '
                              'other than gin_supervised_**.')
-    parser.add_argument('-pp', '--preprocess', choices = ['original', 'filtered', 'two_class'], 
-                        help = 'What dataset to load for M2OR only, can be original, filtered or two_class.')
+    parser.add_argument('-pp', '--preprocess', choices = ['original', 'filtered', 'two_class', 'uniprot', 'mol_OR_pairs'], 
+                        help = 'What dataset to load for M2OR only, can be original, filtered, two_class or uniprot labels.')
     parser.add_argument('-p', '--pretrain', action='store_true',
                         help='Whether to skip the training and evaluate the pre-trained model '
                              'on the test set (default: False)')
+    parser.add_argument('-prev', '--add_feat_size', type=int, default=0,
+                        help= "For passing OR logits as features, specify n_tasks of previous dataset to correctly load saved model.")
     ## Seeded as random_state = 42
-    parser.add_argument('-s', '--split', choices=['scaffold', 'random'], default='scaffold',
+    parser.add_argument('-s', '--split', choices=['scaffold', 'random', 'iterative_stratification'], default='scaffold',
                         help='Dataset splitting method (default: scaffold)')
     parser.add_argument('-sr', '--split-ratio', default='0.8,0.1,0.1', type=str,
                         help='Proportion of the dataset to use for training, validation and test, '
@@ -184,6 +188,10 @@ if __name__ == '__main__':
     elif args['dataset'] == 'GS_LF':
         from data.m2or import GS_LF
         dataset = GS_LF(smiles_to_graph=smiles_to_g,
+                    n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
+    elif args['dataset'] == 'M2OR_Pairs':
+        from data.m2or import M2OR_Pairs
+        dataset = M2OR_Pairs(smiles_to_graph=smiles_to_g,
                     n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
     
     """
