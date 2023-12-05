@@ -8,6 +8,7 @@ from dgl.data.utils import get_download_dir, download, _get_dgl_url
 
 from dgllife.data.csv_dataset import MoleculeCSVDataset
 import torch
+from utils import ROOT_DIR
 #.csv_dataset import MoleculeCSVDataset
 
 __all__ = ['Tox21']
@@ -265,8 +266,9 @@ class M2OR_Pairs(MoleculeCSVDataset):
         if weighted_samples:
             data_path = 'data/datasets/M2OR_sample_weights_pairs.csv'
         else:
-            data_path = '/home/t-seyonec/olfaction/data/datasets/M2OR_original_mol_OR_pairs.csv'
-        
+            data_path = 'data/datasets/M2OR_original_mol_OR_pairs.csv'
+            ## JOIN data_path with ROOT_DIR
+            data_path = ROOT_DIR + '/' + data_path
         df = pd.read_csv(data_path, sep=';')
 
         self.id =  df['mol_id'].astype(str) + '-' + df['seq_id'].astype(str)

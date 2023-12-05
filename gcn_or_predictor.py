@@ -357,6 +357,33 @@ class CrossAttention_2(nn.Module):
         attended_values = torch.matmul(attention_weights, value)
         return attended_values
 
+    def scaled_attention_weights(self, query, key, value):
+        d_k = query.size(-1)
+        scores = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k).float())
+        #attention_weights = torch.softmax(scores, dim=-1) ## try relu here, then softmax at the end w/ the MLP prediction head
+        attention_weights = torch.relu(scores)
+        return attention_weights
+
+    def gen_attn_maps(self, tensor1, tensor2, seq_mask, node_mask):
+        ## Using seq_mask to mask out padding tokens in the protein sequence
+        tensor1 = tensor1 * seq_mask[:, :, np.newaxis] 
+        
+        ## Tensor2 is already masked out, as its filled in from an empty tensor object
+        
+        # Compute query, key, and value representations for both tensors
+        query_tensor1 = self.query_transform_tensor1(tensor1)
+        key_tensor1 = self.key_transform_tensor1(tensor1)
+        value_tensor1 = self.value_transform_tensor1(tensor1)
+
+        query_tensor2 = self.query_transform_tensor2(tensor2)
+        key_tensor2 = self.key_transform_tensor2(tensor2)
+        value_tensor2 = self.value_transform_tensor2(tensor2)
+
+        prot_attention_maps = self.scaled_attention_weights(query_tensor1, key_tensor2, value_tensor2) ## outputs (batch_size, R, A)
+        mol_attention_maps = self.scaled_attention_weights(query_tensor2, key_tensor1, value_tensor1) ## outputs (batch_size, A, R)
+
+        return prot_attention_maps, mol_attention_maps
+
     def forward(self, tensor1, tensor2, seq_mask, node_mask):
         
         ## Using seq_mask to mask out padding tokens in the protein sequence
@@ -579,6 +606,36 @@ class MolORPredictor(nn.Module):
         #    graph_feats = torch.cat((graph_feats, add_feats), dim=1)
         
         return self.predict(graph_feats)
+
+    def generate_attention_maps(self, bg, feats, add_feats = None, seq_mask = None, node_mask = None):
+        node_feats = self.gnn(bg, feats) ## problem causing NaNs is here
+        #print('node feats')
+        #print(node_feats)
+        
+        ## feed logits into bg for us to unbatch and index
+        ## into correct graphs
+        #bg.ndata['logits'] = node_feats
+        
+        ## Unbatch a batched graph
+        graphs = dgl.unbatch(bg)
+        batch_node_feats = torch.zeros((len(graphs), self.max_node_len, node_feats.shape[1]))
+        
+        ## fill in batch_node feats with node feats from each graph
+        counter = 0
+        for i in range(len(graphs)):
+            n_nodes = graphs[i].num_nodes()
+            batch_node_feats[i][:n_nodes] = node_feats[counter:n_nodes + counter]
+            counter+=n_nodes
+            #batch_node_feats[i][:graphs[i].num_nodes()] = graphs[i].ndata['logits']
+
+        if torch.cuda.is_available():
+            add_feats = add_feats.cuda()
+            batch_node_feats = batch_node_feats.cuda()
+
+        prot_attention_maps, mol_attention_maps = self.cross_attn.gen_attn_maps(add_feats, batch_node_feats, seq_mask, node_mask)
+
+        return prot_attention_maps, mol_attention_maps
+
 
 
 class Mol_JointPredictor(nn.Module):

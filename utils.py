@@ -10,6 +10,7 @@ import os
 import torch
 import torch.nn.functional as F
 import numpy as np
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__)) # This is your Project Root
 
 def init_featurizer(args):
     """Initialize node/edge featurizer
@@ -135,11 +136,14 @@ def get_configure(model, featurizer_type, dataset):
     dict
         Returns the manually specified configuration
     """
+
     if featurizer_type == 'pre_train':
         with open('data/configures/{}/{}.json'.format(dataset, model), 'r') as f:
             config = json.load(f)
     else:
-        file_path = '/home/t-seyonec/olfaction/data/configures/{}/{}_{}.json'.format(dataset, model, featurizer_type)
+        ## Joint ROOT_DIR with file_path
+        file_path = 'data/configures/{}/{}_{}.json'.format(dataset, model, featurizer_type)
+        file_path = os.path.join(ROOT_DIR, file_path)
         print(file_path)
         if not os.path.isfile(file_path):
             return NotImplementedError('Model {} on dataset {} with featurization {} has not been '
