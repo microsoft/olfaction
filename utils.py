@@ -269,6 +269,7 @@ def load_model(exp_configure):
             prot_feats=exp_configure['add_feat_size'],
             residual=[exp_configure['residual']] * exp_configure['num_gnn_layers'],
             mol2_prot=exp_configure['mol2prot_dim'],
+            prot_mean_pool=exp_configure['mean_pool'], # mean-pool proteins
             max_seq_len=exp_configure['max_seq_len'],
             max_node_len=exp_configure['max_node_len'],
             batchnorm=[exp_configure['batchnorm']] * exp_configure['num_gnn_layers'],

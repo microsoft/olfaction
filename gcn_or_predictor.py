@@ -320,48 +320,61 @@ class CrossAttention_2(nn.Module):
         mol2_prot (bool): If true, then linear Q, K, V tensors are of size D1 (mol --> prot dim).
     """
 
-    def __init__(self, D1, D2, mol2prot = False):
+    def __init__(self, D1, D2, mol2prot = False, prot_mean_pool = False):
         super(CrossAttention_2, self).__init__()
 
         # Define the trainable weight matrices for query, key, and value transformations
         if mol2prot: ## linear mapping to expand mol tensor to protein tensor size
-            self.query_transform_tensor1 = nn.Linear(D1, D1)
-            self.key_transform_tensor1 = nn.Linear(D1, D1)
-            self.value_transform_tensor1 = nn.Linear(D1, D1)
+            if prot_mean_pool: # query_tensor2, key_tensor1, value_tensor1
+                self.query_transform_tensor2 = nn.Linear(D2, D1)
+                self.key_transform_tensor1 = nn.Linear(D1, D1)
+                self.value_transform_tensor1 = nn.Linear(D1, D1)
+            else: 
+                self.query_transform_tensor1 = nn.Linear(D1, D1)
+                self.key_transform_tensor1 = nn.Linear(D1, D1)
+                self.value_transform_tensor1 = nn.Linear(D1, D1)
 
-            self.query_transform_tensor2 = nn.Linear(D2, D1)
-            self.key_transform_tensor2 = nn.Linear(D2, D1)
-            self.value_transform_tensor2 = nn.Linear(D2, D1)
+                self.query_transform_tensor2 = nn.Linear(D2, D1)
+                self.key_transform_tensor2 = nn.Linear(D2, D1)
+                self.value_transform_tensor2 = nn.Linear(D2, D1)
 
-            # Linear layer for aggregation
-            self.linear1 = nn.Linear(D1, 1)
+                # Linear layer for aggregation
+                self.linear1 = nn.Linear(D1, 1)
             self.linear2 = nn.Linear(D1, 1)
         else: ## original cross-attention experiment collapses protein tensor to mol tensor size
-            self.query_transform_tensor1 = nn.Linear(D1, D2)
-            self.key_transform_tensor1 = nn.Linear(D1, D2)
-            self.value_transform_tensor1 = nn.Linear(D1, D2)
+            if prot_mean_pool: # query_tensor2, key_tensor1, value_tensor1
+                self.query_transform_tensor2 = nn.Linear(D2, D2)
+                self.key_transform_tensor1 = nn.Linear(D1, D2)
+                self.value_transform_tensor1 = nn.Linear(D1, D2)
+            else:
+                self.query_transform_tensor1 = nn.Linear(D1, D2)
+                self.key_transform_tensor1 = nn.Linear(D1, D2)
+                self.value_transform_tensor1 = nn.Linear(D1, D2)
 
-            self.query_transform_tensor2 = nn.Linear(D2, D2)
-            self.key_transform_tensor2 = nn.Linear(D2, D2)
-            self.value_transform_tensor2 = nn.Linear(D2, D2)
+                self.query_transform_tensor2 = nn.Linear(D2, D2)
+                self.key_transform_tensor2 = nn.Linear(D2, D2)
+                self.value_transform_tensor2 = nn.Linear(D2, D2)
 
-            # Linear layer for aggregation
-            self.linear1 = nn.Linear(D2, 1)
+                # Linear layer for aggregation
+                self.linear1 = nn.Linear(D2, 1)
             self.linear2 = nn.Linear(D2, 1)
+        
+        self.prot_mean_pool = prot_mean_pool
+        print("prot_mean_pool: ", prot_mean_pool)
         
     def scaled_dot_product_attention(self, query, key, value):
         d_k = query.size(-1)
         scores = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k).float())
-        #attention_weights = torch.softmax(scores, dim=-1) ## try relu here, then softmax at the end w/ the MLP prediction head
-        attention_weights = torch.relu(scores) ## TODO: - visualize attention weights here
+        attention_weights = torch.softmax(scores, dim=-1) ## try softmax here to not lose neg. info, then softmax at the end w/ the MLP prediction head
+        #attention_weights = torch.relu(scores) ## NOTE: - visualize attention weights here
         attended_values = torch.matmul(attention_weights, value)
         return attended_values
 
     def scaled_attention_weights(self, query, key, value):
         d_k = query.size(-1)
         scores = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k).float())
-        #attention_weights = torch.softmax(scores, dim=-1) ## try relu here, then softmax at the end w/ the MLP prediction head
-        attention_weights = torch.relu(scores)
+        attention_weights = torch.softmax(scores, dim=-1) ## try softmax here to not lose neg. info, then softmax at the end w/ the MLP prediction head
+        # attention_weights = torch.relu(scores) NOTE: use softmax not relu
         return attention_weights
 
     def gen_attn_maps(self, tensor1, tensor2, seq_mask, node_mask):
@@ -371,18 +384,23 @@ class CrossAttention_2(nn.Module):
         ## Tensor2 is already masked out, as its filled in from an empty tensor object
         
         # Compute query, key, and value representations for both tensors
-        query_tensor1 = self.query_transform_tensor1(tensor1)
+        
         key_tensor1 = self.key_transform_tensor1(tensor1)
         value_tensor1 = self.value_transform_tensor1(tensor1)
-
         query_tensor2 = self.query_transform_tensor2(tensor2)
-        key_tensor2 = self.key_transform_tensor2(tensor2)
-        value_tensor2 = self.value_transform_tensor2(tensor2)
 
-        prot_attention_maps = self.scaled_attention_weights(query_tensor1, key_tensor2, value_tensor2) ## outputs (batch_size, R, A)
-        mol_attention_maps = self.scaled_attention_weights(query_tensor2, key_tensor1, value_tensor1) ## outputs (batch_size, A, R)
-
-        return prot_attention_maps, mol_attention_maps
+        if not self.prot_mean_pool: ## include protein query cross attention
+            query_tensor1 = self.query_transform_tensor1(tensor1)
+            key_tensor2 = self.key_transform_tensor2(tensor2)
+            value_tensor2 = self.value_transform_tensor2(tensor2)
+        
+        if self.prot_mean_pool:
+            mol_attention_maps = self.scaled_attention_weights(query_tensor2, key_tensor1, value_tensor1) ## outputs (batch_size, A, R)
+            return mol_attention_maps
+        else:
+            prot_attention_maps = self.scaled_attention_weights(query_tensor1, key_tensor2, value_tensor2) ## outputs (batch_size, R, A)
+            mol_attention_maps = self.scaled_attention_weights(query_tensor2, key_tensor1, value_tensor1) ## outputs (batch_size, A, R)
+            return prot_attention_maps, mol_attention_maps
 
     def forward(self, tensor1, tensor2, seq_mask, node_mask):
         
@@ -392,33 +410,42 @@ class CrossAttention_2(nn.Module):
         ## Tensor2 is already masked out, as its filled in from an empty tensor object
         
         # Compute query, key, and value representations for both tensors
-        query_tensor1 = self.query_transform_tensor1(tensor1)
+
         key_tensor1 = self.key_transform_tensor1(tensor1)
         value_tensor1 = self.value_transform_tensor1(tensor1)
-
         query_tensor2 = self.query_transform_tensor2(tensor2)
-        key_tensor2 = self.key_transform_tensor2(tensor2)
-        value_tensor2 = self.value_transform_tensor2(tensor2)
+        if not self.prot_mean_pool: ## include protein query cross attention
+            query_tensor1 = self.query_transform_tensor1(tensor1)
+            key_tensor2 = self.key_transform_tensor2(tensor2)
+            value_tensor2 = self.value_transform_tensor2(tensor2)
 
         # Compute cross-attention between tensor1 and tensor2
-        attended_values_tensor1 = self.scaled_dot_product_attention(query_tensor1, key_tensor2, value_tensor2) ## outputs (batch_size, R, D2)
+        if not self.prot_mean_pool:
+            attended_values_tensor1 = self.scaled_dot_product_attention(query_tensor1, key_tensor2, value_tensor2) ## outputs (batch_size, R, D2)
+            # aapply Linear for aggregation
+            fixed_size_tensor1 = self.linear1(attended_values_tensor1).squeeze(-1) ## outputs (batch_size, R)
+            fixed_size_tensor1[seq_mask == 0] = 0 #-torch.inf Stop setting to neg inf due to NaN logits
         attended_values_tensor2 = self.scaled_dot_product_attention(query_tensor2, key_tensor1, value_tensor1) ## outputs (batch_size, A, D2)
         #print(attended_values_tensor1.shape)
         #print(attended_values_tensor2.shape)
         #attended_values_tensor2 = self.scaled_dot_product_attention(query_tensor2, key_tensor1, value_tensor1)
 
         # Apply Linear for aggregation
-        fixed_size_tensor1 = self.linear1(attended_values_tensor1).squeeze(-1) ## outputs (batch_size, R)
+        #fixed_size_tensor1 = self.linear1(attended_values_tensor1).squeeze(-1) ## outputs (batch_size, R) NOTE: done above
         fixed_size_tensor2 = self.linear2(attended_values_tensor2).squeeze(-1) ## outputs (batch_size, A)
         #print('atom linear tensor')
         #print(fixed_size_tensor2)
         
         ## TODO: might make more sense to pad before activation.
         ## Set the padded residues and nodes to neg infinity before MLP predictor (uses softmax to set to 0)
-        fixed_size_tensor1[seq_mask == 0] = 0 #-torch.inf Stop setting to neg inf due to NaN logits
+        #fixed_size_tensor1[seq_mask == 0] = 0 #-torch.inf Stop setting to neg inf due to NaN logits NOTE: done above
         fixed_size_tensor2[node_mask == 0] = 0 # -torch.inf Stop setting to neg inf due to NaN logits
-        tensor1 = tensor1.transpose(1, 2) ## transpose such that dimensions are (batch_size, D1, R)
-        protein_vec = torch.einsum('ijk,ik->ij', tensor1, fixed_size_tensor1) ## outputs (batch_size, D1)
+        tensor1 = tensor1.transpose(1, 2) ## transpose such that dimensions are (batch_size, D1, R) NOTE: must do either way
+
+        if self.prot_mean_pool: ## average across protein residues, which is the last dimension in (batch_size, D1, R)
+            protein_vec = torch.mean(tensor1, dim = 2) ## outputs (batch_size, D1)
+        else:  # apply learned residue weights
+            protein_vec = torch.einsum('ijk,ik->ij', tensor1, fixed_size_tensor1) ## outputs (batch_size, D1)
         
         tensor2 = tensor2.transpose(1, 2)
         mol_vec = torch.einsum('ijk, ik->ij', tensor2, fixed_size_tensor2) ## outputs (batch_size, D2)
@@ -493,7 +520,7 @@ class MolORPredictor(nn.Module):
     """
     def __init__(self, in_feats, hidden_feats=None, gnn_norm=None, activation=None,
                  add_feats = None, prot_feats = 1280, max_seq_len = 705, max_node_len = 22,
-                 mol2_prot = False,
+                 mol2_prot = False, prot_mean_pool = False,
                  residual=None, batchnorm=None, dropout=None, classifier_hidden_feats=128,
                  classifier_dropout=0., n_tasks=1, predictor_hidden_feats=128,
                  predictor_dropout=0.):
@@ -520,7 +547,7 @@ class MolORPredictor(nn.Module):
         gnn_out_feats = self.gnn.hidden_feats[-1]
         self.readout = WeightedSumAndMax(gnn_out_feats)
         
-        self.cross_attn = CrossAttention_2(prot_feats, gnn_out_feats, mol2prot = mol2_prot)
+        self.cross_attn = CrossAttention_2(prot_feats, gnn_out_feats, mol2prot = mol2_prot, prot_mean_pool = prot_mean_pool)
         
         self.predict = MLPPredictor(prot_feats + gnn_out_feats, predictor_hidden_feats,
                                     n_tasks, predictor_dropout)

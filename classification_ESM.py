@@ -143,6 +143,8 @@ def main(args, exp_config, train_set, val_set, test_set):
                              collate_fn=collate_molgraphs, num_workers=args['num_workers'])
 
     exp_config['add_feat_size'] = args['add_feat']
+    exp_config['mean_pool'] = args['mean_pool'] ## TODO: hacky way to test if the cross-attention learned aggr for ESM-2 (q = proteins, k & v = mols) is bad
+    print('Mean pooling on protein embeddings?:' + str(exp_config['mean_pool']))
     if args['pretrain']:
         args['num_epochs'] = 0
         if args['featurizer_type'] == 'pre_train':
@@ -287,6 +289,8 @@ if __name__ == '__main__':
                         or vice versa')
     parser.add_argument('-c', '--curriculum', action='store_true')
     parser.add_argument('-cross_att', '--cross_attention', action='store_true', default = False)
+    parser.add_argument('-mp', '--mean_pool', action='store_true', default = False,
+                        help='Whether to use mean pooling for ESM-2 per-residue embeddings over cross-attention (still will do same aggr on molecules)')
     parser.add_argument('-add_feat', '--add_feat', type=int, default=1280,
                         help= "For passing OR logits as features, specify n_tasks of previous dataset to correctly load saved model.")
     parser.add_argument('-prev', '--prev_data_n_tasks', type=int, default=152,
