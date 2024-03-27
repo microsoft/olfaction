@@ -5,6 +5,7 @@ from dgllife.model.model_zoo.mlp_predictor import MLPPredictor
 from dgllife.model.gnn.gcn import GCN
 from dgllife.model.gnn.gatv2 import GATv2
 from dgllife.model.readout.weighted_sum_and_max import WeightedSumAndMax
+from torch.nn.functional import scaled_dot_product_attention
 import dgl
 import numpy as np
 
@@ -226,7 +227,7 @@ class GCNORPredictor(nn.Module):
 class CrossAttention(nn.Module):
     
     """Cross-Attention Block of ligand-protein model, that takes in two 2d tensors for the molecular and protein embeddings, collapses them to the same
-    dimension, and performs a cross-attention between them. 
+    dimension, and performs a cross-attention between them. Uses torch scaled dot product attention.
     
     Args:
         D1 (int): dimension of input protein tensor
@@ -268,8 +269,37 @@ class CrossAttention(nn.Module):
         scores = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k).float())
         #attention_weights = torch.softmax(scores, dim=-1) ## try relu here, then softmax at the end w/ the MLP prediction head
         attention_weights = torch.relu(scores) ## TODO: - visualize attention weights here
+        #NOTE : run with softmax fix
         attended_values = torch.matmul(attention_weights, value)
         return attended_values
+
+    def scaled_attention_weights(self, query, key, value):
+        d_k = query.size(-1)
+        scores = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k).float())
+        #attention_weights = torch.softmax(scores, dim=-1) ## try relu here, then softmax at the end w/ the MLP prediction head
+        attention_weights = torch.relu(scores)
+        #NOTE : run with softmax fix
+        return attention_weights
+
+    def gen_attn_maps(self, tensor1, tensor2, seq_mask, node_mask):
+        ## Using seq_mask to mask out padding tokens in the protein sequence
+        tensor1 = tensor1 * seq_mask[:, :, np.newaxis]
+        
+        ## Tensor2 is already masked out, as its filled in from an empty tensor object
+        
+        # Compute query, key, and value representations for both tensors
+        query_tensor1 = self.query_transform_tensor1(tensor1)
+        key_tensor1 = self.key_transform_tensor1(tensor1)
+        value_tensor1 = self.value_transform_tensor1(tensor1)
+
+        query_tensor2 = self.query_transform_tensor2(tensor2)
+        key_tensor2 = self.key_transform_tensor2(tensor2)
+        value_tensor2 = self.value_transform_tensor2(tensor2)
+
+        prot_attention_maps = self.scaled_attention_weights(query_tensor1, key_tensor2, value_tensor2) ## outputs (batch_size, R, A)
+        mol_attention_maps = self.scaled_attention_weights(query_tensor2, key_tensor1, value_tensor1) ## outputs (batch_size, A, R)
+
+        return prot_attention_maps, mol_attention_maps
 
     def forward(self, tensor1, tensor2, seq_mask, node_mask):
         
@@ -288,8 +318,11 @@ class CrossAttention(nn.Module):
         value_tensor2 = self.value_transform_tensor2(tensor2)
 
         # Compute cross-attention between tensor1 and tensor2
-        attended_values_tensor1 = self.scaled_dot_product_attention(query_tensor1, key_tensor2, value_tensor2) ## outputs (batch_size, R, D2)
-        attended_values_tensor2 = self.scaled_dot_product_attention(query_tensor2, key_tensor1, value_tensor1) ## outputs (batch_size, A, D2)
+        #attended_values_tensor1 = self.scaled_dot_product_attention(query_tensor1, key_tensor2, value_tensor2) ## outputs (batch_size, R, D2)
+        #attended_values_tensor2 = self.scaled_dot_product_attention(query_tensor2, key_tensor1, value_tensor1) ## outputs (batch_size, A, D2)
+        attended_values_tensor1 = scaled_dot_product_attention(query_tensor1, key_tensor2, value_tensor2)
+        attended_values_tensor2 = scaled_dot_product_attention(query_tensor2, key_tensor1, value_tensor1)
+        
         #print(attended_values_tensor1.shape)
         #print(attended_values_tensor2.shape)
         #attended_values_tensor2 = self.scaled_dot_product_attention(query_tensor2, key_tensor1, value_tensor1)
@@ -299,15 +332,37 @@ class CrossAttention(nn.Module):
         fixed_size_tensor2 = self.linear2(attended_values_tensor2).squeeze(-1) ## outputs (batch_size, A)
         #print('atom linear tensor')
         #print(fixed_size_tensor2)
-        
+
         ## TODO: might make more sense to pad before activation.
         ## Set the padded residues and nodes to neg infinity before MLP predictor (uses softmax to set to 0)
         fixed_size_tensor1[seq_mask == 0] = 0 #-torch.inf Stop setting to neg inf due to NaN logits
         fixed_size_tensor2[node_mask == 0] = 0 # -torch.inf Stop setting to neg inf due to NaN logits
+
+        # Apply softmax on the fixed size tensors such that the sum of residues (R) or atoms (A) is 1
+        softmax_fixed_size_tensor1 = torch.softmax(fixed_size_tensor1, dim=1) # sum of residues is 1
+        softmax_fixed_size_tensor2 = torch.softmax(fixed_size_tensor2, dim=1) # sum of atoms is 1
         
+        tensor1 = tensor1.transpose(1, 2) ## transpose such that dimensions are (batch_size, D1, R)
+        protein_vec = torch.einsum('ijk,ik->ij', tensor1, softmax_fixed_size_tensor1) ## outputs (batch_size, D1)
+        
+        tensor2 = tensor2.transpose(1, 2)
+        mol_vec = torch.einsum('ijk, ik->ij', tensor2, softmax_fixed_size_tensor2) ## outputs (batch_size, D2)
+        
+        output_vec = torch.cat((protein_vec, mol_vec), dim=1)
         ## concat into output_vector (size: (batch_size, prot_seq_len + node_len))
-        output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1)
+        # output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1)
         return output_vec    
+
+        # NOTE: code below does mean aggregation over residue + atoms, before concat
+        # NOTE: below, we're temporarily trying to use the mean of the attended values as the fixed size tensor 
+        """
+        fixed_size_tensor1 = attended_values_tensor1.mean(dim=1) # B x D1
+        fixed_size_tensor2 = attended_values_tensor2.mean(dim=1) # B x D1 (assuming projection to prot dim space)
+        """
+        output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1)
+        ## concat into output_vector (size: (batch_size, prot_seq_len + node_len))
+        # output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1) # now the output_vec is size (1, 2* D1)
+        return output_vec
     
 class CrossAttention_2(nn.Module):
     
@@ -368,7 +423,7 @@ class CrossAttention_2(nn.Module):
 
     def gen_attn_maps(self, tensor1, tensor2, seq_mask, node_mask):
         ## Using seq_mask to mask out padding tokens in the protein sequence
-        tensor1 = tensor1 * seq_mask[:, :, np.newaxis] 
+        tensor1 = tensor1 * seq_mask[:, :, np.newaxis]
         
         ## Tensor2 is already masked out, as its filled in from an empty tensor object
         
@@ -414,14 +469,16 @@ class CrossAttention_2(nn.Module):
         fixed_size_tensor2 = self.linear2(attended_values_tensor2).squeeze(-1) ## outputs (batch_size, A)
         #print('atom linear tensor')
         #print(fixed_size_tensor2)
+
+        ## TODO: might make more sense to pad before activation.
+        ## Set the padded residues and nodes to neg infinity before MLP predictor (uses softmax to set to 0)
+        fixed_size_tensor1[seq_mask == 0] = 0 #-torch.inf Stop setting to neg inf due to NaN logits
+        fixed_size_tensor2[node_mask == 0] = 0 # -torch.inf Stop setting to neg inf due to NaN logits
+
         # Apply softmax on the fixed size tensors such that the sum of residues (R) or atoms (A) is 1
         softmax_fixed_size_tensor1 = torch.softmax(fixed_size_tensor1, dim=1) # sum of residues is 1
         softmax_fixed_size_tensor2 = torch.softmax(fixed_size_tensor2, dim=1) # sum of atoms is 1
         
-        ## TODO: might make more sense to pad before activation.
-        ## Set the padded residues and nodes to neg infinity before MLP predictor (uses softmax to set to 0)
-        softmax_fixed_size_tensor1[seq_mask == 0] = 0 #-torch.inf Stop setting to neg inf due to NaN logits
-        softmax_fixed_size_tensor2[node_mask == 0] = 0 # -torch.inf Stop setting to neg inf due to NaN logits
         tensor1 = tensor1.transpose(1, 2) ## transpose such that dimensions are (batch_size, D1, R)
         protein_vec = torch.einsum('ijk,ik->ij', tensor1, softmax_fixed_size_tensor1) ## outputs (batch_size, D1)
         
