@@ -354,6 +354,7 @@ class CrossAttention_2(nn.Module):
         scores = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k).float())
         #attention_weights = torch.softmax(scores, dim=-1) ## try relu here, then softmax at the end w/ the MLP prediction head
         attention_weights = torch.relu(scores) ## TODO: - visualize attention weights here
+        #NOTE : run with softmax fix
         attended_values = torch.matmul(attention_weights, value)
         return attended_values
 
@@ -362,6 +363,7 @@ class CrossAttention_2(nn.Module):
         scores = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k).float())
         #attention_weights = torch.softmax(scores, dim=-1) ## try relu here, then softmax at the end w/ the MLP prediction head
         attention_weights = torch.relu(scores)
+        #NOTE : run with softmax fix
         return attention_weights
 
     def gen_attn_maps(self, tensor1, tensor2, seq_mask, node_mask):
@@ -412,21 +414,36 @@ class CrossAttention_2(nn.Module):
         fixed_size_tensor2 = self.linear2(attended_values_tensor2).squeeze(-1) ## outputs (batch_size, A)
         #print('atom linear tensor')
         #print(fixed_size_tensor2)
+        # Apply softmax on the fixed size tensors such that the sum of residues (R) or atoms (A) is 1
+        softmax_fixed_size_tensor1 = torch.softmax(fixed_size_tensor1, dim=1) # sum of residues is 1
+        softmax_fixed_size_tensor2 = torch.softmax(fixed_size_tensor2, dim=1) # sum of atoms is 1
         
         ## TODO: might make more sense to pad before activation.
         ## Set the padded residues and nodes to neg infinity before MLP predictor (uses softmax to set to 0)
-        fixed_size_tensor1[seq_mask == 0] = 0 #-torch.inf Stop setting to neg inf due to NaN logits
-        fixed_size_tensor2[node_mask == 0] = 0 # -torch.inf Stop setting to neg inf due to NaN logits
+        softmax_fixed_size_tensor1[seq_mask == 0] = 0 #-torch.inf Stop setting to neg inf due to NaN logits
+        softmax_fixed_size_tensor2[node_mask == 0] = 0 # -torch.inf Stop setting to neg inf due to NaN logits
         tensor1 = tensor1.transpose(1, 2) ## transpose such that dimensions are (batch_size, D1, R)
-        protein_vec = torch.einsum('ijk,ik->ij', tensor1, fixed_size_tensor1) ## outputs (batch_size, D1)
+        protein_vec = torch.einsum('ijk,ik->ij', tensor1, softmax_fixed_size_tensor1) ## outputs (batch_size, D1)
         
         tensor2 = tensor2.transpose(1, 2)
-        mol_vec = torch.einsum('ijk, ik->ij', tensor2, fixed_size_tensor2) ## outputs (batch_size, D2)
+        mol_vec = torch.einsum('ijk, ik->ij', tensor2, softmax_fixed_size_tensor2) ## outputs (batch_size, D2)
         
         output_vec = torch.cat((protein_vec, mol_vec), dim=1)
         ## concat into output_vector (size: (batch_size, prot_seq_len + node_len))
         # output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1)
         return output_vec    
+
+        # NOTE: code below does mean aggregation over residue + atoms, before concat
+        # NOTE: below, we're temporarily trying to use the mean of the attended values as the fixed size tensor 
+        """
+        fixed_size_tensor1 = attended_values_tensor1.mean(dim=1) # B x D1
+        fixed_size_tensor2 = attended_values_tensor2.mean(dim=1) # B x D1 (assuming projection to prot dim space)
+        """
+        output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1)
+        ## concat into output_vector (size: (batch_size, prot_seq_len + node_len))
+        # output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1) # now the output_vec is size (1, 2* D1)
+        return output_vec    
+
     
 
     
@@ -492,12 +509,13 @@ class MolORPredictor(nn.Module):
         The probability for dropout in the output MLP predictor. Default to 0.
     """
     def __init__(self, in_feats, hidden_feats=None, gnn_norm=None, activation=None,
-                 add_feats = None, prot_feats = 1280, max_seq_len = 705, max_node_len = 22,
+                 add_feats = None, prot_feats = 1280, gnn_attended_feats = None, max_seq_len = 705, max_node_len = 22,
                  mol2_prot = False,
                  residual=None, batchnorm=None, dropout=None, classifier_hidden_feats=128,
                  classifier_dropout=0., n_tasks=1, predictor_hidden_feats=128,
                  predictor_dropout=0.):
         super(MolORPredictor, self).__init__()
+        torch.autograd.set_detect_anomaly(True)
 
         if predictor_hidden_feats == 128 and classifier_hidden_feats != 128:
             print('classifier_hidden_feats is deprecated and will be removed in the future, '
@@ -521,8 +539,10 @@ class MolORPredictor(nn.Module):
         self.readout = WeightedSumAndMax(gnn_out_feats)
         
         self.cross_attn = CrossAttention_2(prot_feats, gnn_out_feats, mol2prot = mol2_prot)
+
+        gnn_attended_feats = self.gnn.hidden_feats[-1] if gnn_attended_feats is None else gnn_attended_feats # output dimension of mol may differ
         
-        self.predict = MLPPredictor(prot_feats + gnn_out_feats, predictor_hidden_feats,
+        self.predict = MLPPredictor(prot_feats + gnn_attended_feats, predictor_hidden_feats,
                                     n_tasks, predictor_dropout)
         
         #self.predict = MLPPredictor(max_seq_len + max_node_len, predictor_hidden_feats, 
