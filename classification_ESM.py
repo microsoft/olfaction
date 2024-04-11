@@ -133,7 +133,7 @@ def main(args, exp_config, train_set, val_set, test_set):
     exp_config['max_seq_len'] = args['max_seq_len']
     exp_config['max_node_len'] = args['max_node_len']
     exp_config['mol2prot_dim'] = args['mol2prot_dim']
-    
+    exp_config['gnn_attended_feats'] = args['gnn_attended_feats']
 
     train_loader = DataLoader(dataset=train_set, batch_size=exp_config['batch_size'], shuffle=True,
                               collate_fn=collate_molgraphs, num_workers=args['num_workers'])
@@ -289,6 +289,7 @@ if __name__ == '__main__':
     parser.add_argument('-cross_att', '--cross_attention', action='store_true', default = False)
     parser.add_argument('-add_feat', '--add_feat', type=int, default=1280,
                         help= "For passing OR logits as features, specify n_tasks of previous dataset to correctly load saved model.")
+    parser.add_argument('-gnn_attend', '--gnn_attended_feats', type=int, default=None)
     parser.add_argument('-prev', '--prev_data_n_tasks', type=int, default=152,
                         help= "For using pre-trained percept model, specify n_tasks of previous dataset to correctly load saved model.")
     parser.add_argument('-pmp', '--prev_model_path', type=str, default='M2OR_Uniprot_original_GCN',
@@ -314,12 +315,19 @@ if __name__ == '__main__':
                         help='Print the training progress every X mini-batches')
     parser.add_argument('-rp', '--result-path', type=str, default='classification_results',
                         help='Path to save training results (default: classification_results)')
+    parser.add_argument('-device', '--device', type=str, default='0',
+                        help='Indices of GPU ids to use (default: 0). Past in as id,id2,id3,...')
     args = parser.parse_args().__dict__
 
     if torch.cuda.is_available():
-        args['device'] = torch.device('cuda:0')
+        ## set cuda device
+        device = torch.device('cuda:{}'.format(args['device']))
+        torch.cuda.set_device(device)
+        args['device'] = device
     else:
-        args['device'] = torch.device('cpu')
+        device = torch.device('cpu')
+        torch.cuda.set_device(device)
+        args['device'] = device
 
     args = init_featurizer(args)
     mkdir_p(args['result_path'])

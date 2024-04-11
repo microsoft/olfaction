@@ -263,7 +263,7 @@ class CrossAttention(nn.Module):
             # Linear layer for aggregation
             self.linear1 = nn.Linear(D2, 1)
             self.linear2 = nn.Linear(D2, 1)
-        
+    """
     def scaled_dot_product_attention(self, query, key, value):
         d_k = query.size(-1)
         scores = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k).float())
@@ -272,7 +272,7 @@ class CrossAttention(nn.Module):
         #NOTE : run with softmax fix
         attended_values = torch.matmul(attention_weights, value)
         return attended_values
-
+    """
     def scaled_attention_weights(self, query, key, value):
         d_k = query.size(-1)
         scores = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k).float())
@@ -339,14 +339,14 @@ class CrossAttention(nn.Module):
         fixed_size_tensor2[node_mask == 0] = 0 # -torch.inf Stop setting to neg inf due to NaN logits
 
         # Apply softmax on the fixed size tensors such that the sum of residues (R) or atoms (A) is 1
-        softmax_fixed_size_tensor1 = torch.softmax(fixed_size_tensor1, dim=1) # sum of residues is 1
-        softmax_fixed_size_tensor2 = torch.softmax(fixed_size_tensor2, dim=1) # sum of atoms is 1
+        #softmax_fixed_size_tensor1 = torch.softmax(fixed_size_tensor1, dim=1) # sum of residues is 1
+        #softmax_fixed_size_tensor2 = torch.softmax(fixed_size_tensor2, dim=1) # sum of atoms is 1
         
         tensor1 = tensor1.transpose(1, 2) ## transpose such that dimensions are (batch_size, D1, R)
-        protein_vec = torch.einsum('ijk,ik->ij', tensor1, softmax_fixed_size_tensor1) ## outputs (batch_size, D1)
+        protein_vec = torch.einsum('ijk,ik->ij', tensor1, fixed_size_tensor1) ## outputs (batch_size, D1)
         
         tensor2 = tensor2.transpose(1, 2)
-        mol_vec = torch.einsum('ijk, ik->ij', tensor2, softmax_fixed_size_tensor2) ## outputs (batch_size, D2)
+        mol_vec = torch.einsum('ijk, ik->ij', tensor2, fixed_size_tensor2) ## outputs (batch_size, D2)
         
         output_vec = torch.cat((protein_vec, mol_vec), dim=1)
         ## concat into output_vector (size: (batch_size, prot_seq_len + node_len))
@@ -475,15 +475,15 @@ class CrossAttention_2(nn.Module):
         fixed_size_tensor1[seq_mask == 0] = 0 #-torch.inf Stop setting to neg inf due to NaN logits
         fixed_size_tensor2[node_mask == 0] = 0 # -torch.inf Stop setting to neg inf due to NaN logits
 
-        # Apply softmax on the fixed size tensors such that the sum of residues (R) or atoms (A) is 1
-        softmax_fixed_size_tensor1 = torch.softmax(fixed_size_tensor1, dim=1) # sum of residues is 1
-        softmax_fixed_size_tensor2 = torch.softmax(fixed_size_tensor2, dim=1) # sum of atoms is 1
+        #NOTE: doesn't perform well. Idea: Apply softmax on the fixed size tensors such that the sum of residues (R) or atoms (A) is 1
+        #softmax_fixed_size_tensor1 = torch.softmax(fixed_size_tensor1, dim=1) # sum of residues is 1
+        #softmax_fixed_size_tensor2 = torch.softmax(fixed_size_tensor2, dim=1) # sum of atoms is 1
         
         tensor1 = tensor1.transpose(1, 2) ## transpose such that dimensions are (batch_size, D1, R)
-        protein_vec = torch.einsum('ijk,ik->ij', tensor1, softmax_fixed_size_tensor1) ## outputs (batch_size, D1)
+        protein_vec = torch.einsum('ijk,ik->ij', tensor1, fixed_size_tensor1) ## outputs (batch_size, D1)
         
         tensor2 = tensor2.transpose(1, 2)
-        mol_vec = torch.einsum('ijk, ik->ij', tensor2, softmax_fixed_size_tensor2) ## outputs (batch_size, D2)
+        mol_vec = torch.einsum('ijk, ik->ij', tensor2, fixed_size_tensor2) ## outputs (batch_size, D2)
         
         output_vec = torch.cat((protein_vec, mol_vec), dim=1)
         ## concat into output_vector (size: (batch_size, prot_seq_len + node_len))
@@ -593,14 +593,21 @@ class MolORPredictor(nn.Module):
                        batchnorm=batchnorm,
                        dropout=dropout)
         gnn_out_feats = self.gnn.hidden_feats[-1]
-        self.readout = WeightedSumAndMax(gnn_out_feats)
+        #self.readout = WeightedSumAndMax(gnn_out_feats)
         
+        #self.cross_attn = CrossAttention_2(prot_feats, gnn_out_feats, mol2prot = mol2_prot)
+        # NOTE: trying with torch implementation
         self.cross_attn = CrossAttention_2(prot_feats, gnn_out_feats, mol2prot = mol2_prot)
 
         gnn_attended_feats = self.gnn.hidden_feats[-1] if gnn_attended_feats is None else gnn_attended_feats # output dimension of mol may differ
         
         self.predict = MLPPredictor(prot_feats + gnn_attended_feats, predictor_hidden_feats,
                                     n_tasks, predictor_dropout)
+        
+        # Layernorms before and after cross-attention
+        self.prot_norm = nn.LayerNorm(prot_feats)
+        self.mol_norm = nn.LayerNorm(gnn_out_feats)
+        self.feat_norm = nn.LayerNorm(prot_feats + gnn_attended_feats)
         
         #self.predict = MLPPredictor(max_seq_len + max_node_len, predictor_hidden_feats, 
         #                            n_tasks, predictor_dropout)
@@ -677,10 +684,16 @@ class MolORPredictor(nn.Module):
         #print(batch_node_feats)
         #print('seq emb shape:')
         #print(add_feats.shape)
+
+        # LayerNorm on minibatch of per-residue protein embeddings, per-node embeddings
+        add_feats = self.prot_norm(add_feats)
+        batch_node_feats = self.mol_norm(batch_node_feats)
         
         graph_feats = self.cross_attn(add_feats, batch_node_feats, seq_mask, node_mask)
         #if add_feats is not None:
         #    graph_feats = torch.cat((graph_feats, add_feats), dim=1)
+        # LayerNorm on final weighted joint protein-molecule embeddings
+        graph_feats = self.feat_norm(graph_feats)
         
         return self.predict(graph_feats)
 

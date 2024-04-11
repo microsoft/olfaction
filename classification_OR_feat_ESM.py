@@ -118,6 +118,31 @@ def main(args, exp_config, train_set, val_set, test_set):
     #exp_config['max_seq_len'] = args['max_seq_len']
     exp_config['max_node_len'] = args['max_node_len']  
 
+    ## generate seq_mask, seq_embeddings
+    if args['num_OR_logits'] > 0:
+        import pandas as pd
+        mol_OR = pd.read_csv('data/datasets/M2OR_original_mol_OR_pairs.csv', sep = ';')
+        top_seqs = mol_OR['mutated_Sequence'].value_counts()[0:args['num_OR_logits']].keys().tolist()
+        max_seq_len = len(max(top_seqs, key=len))        
+        seq_masks = torch.zeros((len(top_seqs), max_seq_len))
+        print(seq_masks.shape)
+        for i in range(len(top_seqs)):
+            seq_masks[i, :len(top_seqs[i])] = 1
+            top_seqs[i] += "<pad>"*(max_seq_len - len(top_seqs[i]))
+        exp_config['max_seq_len'] = max_seq_len
+        from data.m2or import esm_embed
+        seq_embeddings = esm_embed(top_seqs, per_residue=True, random_weights=False, esm_model_version = '650m') ## output shape: (100, max_seq_len, embedding_dim)
+        print(len(seq_embeddings))#.shape)
+        seq_emb_arr = np.dstack(seq_embeddings)
+        seq_embeddings = torch.FloatTensor(np.rollaxis(seq_emb_arr, -1))#.cuda()
+        print(seq_embeddings.shape)
+    else:
+        #$ Now that the model weights are loaded, lets revert n_tasks back to the current dataset's number of tasks (GS-LF)
+        train_OR_logits = torch.zeros(len(train_loader), exp_config['batch_size'], 0)#.cuda()
+        val_OR_logits = torch.zeros(len(val_loader), exp_config['batch_size'], 0)#.cuda()
+        test_OR_logits = torch.zeros(len(test_loader), exp_config['batch_size'], 0)#.cuda()
+        exp_config['max_seq_len'] = 0
+
     if args['pretrain']:
         args['num_epochs'] = 0
         if args['featurizer_type'] == 'pre_train':
@@ -127,6 +152,46 @@ def main(args, exp_config, train_set, val_set, test_set):
             model = load_pretrained('{}_{}_{}'.format(
                 args['model'], args['featurizer_type'], args['dataset'])).to(args['device'])
     elif args['curriculum'] == True:
+        ## Use pre-trained GNN encoder from M2OR to initialize GCN model
+        model = load_model(exp_config).to(args['device'])
+        loss_criterion = nn.BCEWithLogitsLoss(reduction='none')
+        optimizer = Adam(model.parameters(), lr=exp_config['lr'],
+                         weight_decay=exp_config['weight_decay'])
+        stopper = EarlyStopping(patience=exp_config['patience'],
+                                filename=args['result_path'] + '/model.pth',
+                                metric=args['metric'])
+        exp_config['gnn_attended_feats'] = args['gnn_attended_feats']
+        ## here we update n_tasks to be the number of tasks in the previous dataset (M2OR usually)
+        exp_config.update({'n_tasks': args['prev_data_n_tasks']})
+        ## Change model to GCN type to load M2OR model temporarily (super hacky)
+        exp_config.update({'model': 'MolOR'})
+        exp_config.update({'add_feat_size' : args['prot_dim']}) #args['prot_dim'] NOTE: NEED LESS HACKY WAY
+        ## Load OR predictive model to generate OR preds as features
+        exp_config['num_gnn_layers'] = 2 ## MolOR is 2 GNN layers
+        exp_config['predictor_hidden_feats'] = 128 ## MolOR is 256 hidden feats
+        exp_config['gnn_hidden_feats'] = 256 ## MolOR is 256 hidden feats
+        OR_model = load_model(exp_config).to(args['device'])
+        ## Now we load the model weights for the previously trained model, in this case Uniprot-M2OR GCN
+        OR_checkpoint = torch.load(args['prev_model_path'] + '/model.pth', map_location=args['device'])
+        OR_model.load_state_dict(OR_checkpoint['model_state_dict'])     
+        ##NOTE: Trying something where in addition to using OR logits, we fine-tune the M2OR pre-trained GNN encoder.
+        # we want to copy the weights from `GNN` of our M2OR model to `gnn` of model
+        print(OR_model.gnn)
+
+        for original_layer, new_layer in zip(OR_model.gnn.gnn_layers, model.gnn.gnn_layers):
+            # Copying weights and biases for graph_conv
+            new_layer.graph_conv.weight.data = original_layer.graph_conv.weight.data.clone()
+            new_layer.graph_conv.bias.data = original_layer.graph_conv.bias.data.clone()
+
+            # Copying weights and biases for res_connection (Linear layer)
+            new_layer.res_connection.weight.data = original_layer.res_connection.weight.data.clone()
+            new_layer.res_connection.bias.data = original_layer.res_connection.bias.data.clone()
+
+            # If there are other parameters or buffers, they should also be copied similarly
+        # Optionally, verify that the weights are the same
+        print("Weights copied:")
+
+        """
         from dgllife.model.model_zoo.mlp_predictor import MLPPredictor
         ## here we update n_tasks to be the number of tasks in the previous dataset (M2OR usually)
         exp_config.update({'n_tasks': args['prev_data_n_tasks']})
@@ -142,6 +207,7 @@ def main(args, exp_config, train_set, val_set, test_set):
         ## Now we load the model weights for the previously trained model, in this case Uniprot-M2OR GCN
         checkpoint = torch.load(args['prev_model_path'] + '/model.pth', map_location=args['device'])
         model.load_state_dict(checkpoint['model_state_dict'])
+
         #$ Now that the model weights are loaded, lets revert n_tasks back to the current dataset's number of tasks (GS-LF)
         exp_config.update({'n_tasks': args['n_tasks']})
         #exp_config.update({'model': 'GCN_OR'})
@@ -158,6 +224,7 @@ def main(args, exp_config, train_set, val_set, test_set):
         stopper = EarlyStopping(patience=exp_config['patience'],
                                 filename=args['result_path'] + '/model.pth',
                                 metric=args['metric'])
+        """
     else:
         model = load_model(exp_config).to(args['device'])
         loss_criterion = nn.BCEWithLogitsLoss(reduction='none')
@@ -166,24 +233,9 @@ def main(args, exp_config, train_set, val_set, test_set):
         stopper = EarlyStopping(patience=exp_config['patience'],
                                 filename=args['result_path'] + '/model.pth',
                                 metric=args['metric'])
-    ## generate seq_mask, seq_embeddings
-    import pandas as pd
-    mol_OR = pd.read_csv('data/datasets/M2OR_original_mol_OR_pairs.csv', sep = ';')
-    top_seqs = mol_OR['mutated_Sequence'].value_counts()[0:args['num_OR_logits']].keys().tolist()
-    max_seq_len = len(max(top_seqs, key=len))        
-    seq_masks = torch.zeros((len(top_seqs), max_seq_len))
-    print(seq_masks.shape)
-    for i in range(len(top_seqs)):
-        seq_masks[i, :len(top_seqs[i])] = 1
-        top_seqs[i] += "<pad>"*(max_seq_len - len(top_seqs[i]))
-    exp_config['max_seq_len'] = max_seq_len
-    from data.m2or import esm_embed
-    seq_embeddings = esm_embed(top_seqs, per_residue=True, random_weights=False, esm_model_version = '650m') ## output shape: (100, max_seq_len, embedding_dim)
-    print(len(seq_embeddings))#.shape)
-    seq_emb_arr = np.dstack(seq_embeddings)
-    seq_embeddings = torch.FloatTensor(np.rollaxis(seq_emb_arr, -1))#.cuda()
-    print(seq_embeddings.shape)
     
+
+    exp_config['gnn_attended_feats'] = args['gnn_attended_feats']
     ## here we update n_tasks to be the number of tasks in the previous dataset (M2OR usually)
     exp_config.update({'n_tasks': args['prev_data_n_tasks']})
     ## Change model to GCN type to load M2OR model temporarily (super hacky)
@@ -199,19 +251,62 @@ def main(args, exp_config, train_set, val_set, test_set):
     OR_checkpoint = torch.load(args['prev_model_path'] + '/model.pth', map_location=args['device'])
     OR_model.load_state_dict(OR_checkpoint['model_state_dict'])
     OR_model.eval()
-    
-    #$ Now that the model weights are loaded, lets revert n_tasks back to the current dataset's number of tasks (GS-LF)
-    train_OR_logits = torch.zeros(len(train_loader), exp_config['batch_size'], seq_embeddings.shape[0])#.cuda()
-    val_OR_logits = torch.zeros(len(val_loader), exp_config['batch_size'], seq_embeddings.shape[0])#.cuda()
-    test_OR_logits = torch.zeros(len(test_loader), exp_config['batch_size'], seq_embeddings.shape[0])#.cuda()
+
+    train_OR_logits, val_OR_logits, test_OR_logits = None, None, None
     
     ## Check if file exists at 'data/datasets/train_OR_logits.pt'
     ## If so, load it and skip training
-    if os.path.isfile('data/datasets/train_{}_ORs_logits.pt'.format(args['num_OR_logits'])):
-        train_OR_logits = torch.load('data/datasets/train_{}_ORs_logits.pt'.format(args['num_OR_logits']))
-        val_OR_logits = torch.load('data/datasets/val_{}_ORs_logits.pt'.format(args['num_OR_logits']))
-        test_OR_logits = torch.load('data/datasets/test_{}_ORs_logits.pt'.format(args['num_OR_logits']))
-    else:
+    if args['prev_model_loss'] == 'unweighted_loss':
+        print("Loading logits from model trained on unweighed loss")
+        if os.path.isfile('data/datasets/train_{}_ORs_logits.pt'.format(args['num_OR_logits'])):
+            train_OR_logits = torch.load('data/datasets/train_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+            val_OR_logits = torch.load('data/datasets/val_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+            test_OR_logits = torch.load('data/datasets/test_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+        # do a .format(any number > args['num_OR_logits'])
+        elif args['num_OR_logits'] < 400 and os.path.isfile('data/datasets/train_400_ORs_logits.pt'):
+            # NOTE: this is for the OR logit ablation test
+            train_OR_logits = torch.load('data/datasets/train_400_ORs_logits.pt')
+            val_OR_logits = torch.load('data/datasets/val_400_ORs_logits.pt')
+            test_OR_logits = torch.load('data/datasets/test_400_ORs_logits.pt')
+            # splice the first args['num_OR_logits'] OR logits from the 400 OR logits (columns)
+            train_OR_logits = train_OR_logits[:, :, :args['num_OR_logits']]
+            val_OR_logits = val_OR_logits[:, :, :args['num_OR_logits']]
+            test_OR_logits = test_OR_logits[:, :, :args['num_OR_logits']]
+        else:
+            print("No logits file found")
+    # check if path in 'data/datasets/ contains file with 'weighted' in name
+    else: # use logits from model trained with weighed loss
+        print("Loading logits from model trained on weighed loss")
+        # args['prev_model_loss'] == 'weighted_loss'
+        if os.path.isfile('data/datasets/train_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits'])):
+            train_OR_logits = torch.load('data/datasets/train_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+            val_OR_logits = torch.load('data/datasets/val_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+            test_OR_logits = torch.load('data/datasets/test_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+        elif args['num_OR_logits'] < 400:
+            if os.path.isfile('data/datasets/train_weighted_400_ORs_logits.pt'):
+                train_OR_logits = torch.load('data/datasets/train_weighted_400_ORs_logits.pt')
+                val_OR_logits = torch.load('data/datasets/val_weighted_400_ORs_logits.pt')
+                test_OR_logits = torch.load('data/datasets/test_weighted_400_ORs_logits.pt')
+            elif os.path.isfile('data/datasets/train_weighted_1237_ORs_logits.pt'):
+                train_OR_logits = torch.load('data/datasets/train_weighted_1237_ORs_logits.pt')
+                val_OR_logits = torch.load('data/datasets/val_weighted_1237_ORs_logits.pt')
+                test_OR_logits = torch.load('data/datasets/test_weighted_1237_ORs_logits.pt')
+            # splice the first args['num_OR_logits'] OR logits from the 400 OR logits (columns)
+            else: 
+                print("No logits file found")
+            if train_OR_logits is not None:
+                train_OR_logits = train_OR_logits[:, :, :args['num_OR_logits']]
+                val_OR_logits = val_OR_logits[:, :, :args['num_OR_logits']]
+                test_OR_logits = test_OR_logits[:, :, :args['num_OR_logits']]
+        
+    # generate OR logits if none on disk
+    if train_OR_logits is None:
+        print('Generating OR logits')
+        #$ Now that the model weights are loaded, lets revert n_tasks back to the current dataset's number of tasks (GS-LF)
+        train_OR_logits = torch.zeros(len(train_loader), exp_config['batch_size'], seq_embeddings.shape[0])#.cuda()
+        val_OR_logits = torch.zeros(len(val_loader), exp_config['batch_size'], seq_embeddings.shape[0])#.cuda()
+        test_OR_logits = torch.zeros(len(test_loader), exp_config['batch_size'], seq_embeddings.shape[0])#.cuda()    
+
         with torch.no_grad():
             for batch_id, batch_data in enumerate(train_loader):
                 smiles, bg, labels, masks, ids, node_masks = batch_data
@@ -295,13 +390,21 @@ def main(args, exp_config, train_set, val_set, test_set):
                     seq_mask = seq_mask.repeat(len(smiles), 1)
                     #print(predict_OR_feat(args, aux_model, bg, seq_embed, seq_mask, node_masks).shape)
                     test_OR_logits[batch_id, :len(smiles), i] = predict_OR_feat(args, OR_model, bg, seq_embed, seq_mask, node_masks).squeeze(dim=1)
-            torch.save(train_OR_logits, 'data/datasets/train_{}_ORs_logits.pt'.format(args['num_OR_logits']))
-            torch.save(val_OR_logits, 'data/datasets/val_{}_ORs_logits.pt'.format(args['num_OR_logits']))
-            torch.save(test_OR_logits, 'data/datasets/test_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+            if args['prev_model_loss'] == 'weighted_loss':
+                print('Saving OR logits for model trained on weighed loss')
+                torch.save(train_OR_logits, 'data/datasets/train_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+                torch.save(val_OR_logits, 'data/datasets/val_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+                torch.save(test_OR_logits, 'data/datasets/test_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+            else:
+                print('Saving OR logits for model trained on unweighed loss')
+                torch.save(train_OR_logits, 'data/datasets/train_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+                torch.save(val_OR_logits, 'data/datasets/val_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+                torch.save(test_OR_logits, 'data/datasets/test_{}_ORs_logits.pt'.format(args['num_OR_logits']))
 
     print(train_OR_logits.shape)
     print(val_OR_logits.shape)
     print(test_OR_logits.shape)
+
     train_OR_logits = train_OR_logits.cuda()
     val_OR_logits = val_OR_logits.cuda()
     test_OR_logits = test_OR_logits.cuda()
@@ -342,165 +445,6 @@ def main(args, exp_config, train_set, val_set, test_set):
             f.write('Best val {}: {}\n'.format(args['metric'], stopper.best_score))
         f.write('Val {}: {}\n'.format(args['metric'], val_score))
         f.write('Test {}: {}\n'.format(args['metric'], test_score))
-
-def generate_OR_logits(args, exp_config, train_set, val_set, test_set, dataset):
-    if args['featurizer_type'] != 'pre_train':
-        print(exp_config)
-        print(args['node_featurizer'].feat_size())
-        exp_config['in_node_feats'] = args['node_featurizer'].feat_size()
-        if args['edge_featurizer'] is not None:
-            exp_config['in_edge_feats'] = args['edge_featurizer'].feat_size()
-    exp_config.update({
-        'n_tasks': args['n_tasks'],
-        'model': args['model']
-    })
-    ## shuffled
-    full_loader = DataLoader(dataset = dataset, batch_size = exp_config['batch_size'], shuffle = False,
-                             collate_fn=collate_molgraphs, num_workers=args['num_workers'])
-
-    train_loader = DataLoader(dataset=train_set, batch_size=exp_config['batch_size'], shuffle=True,
-                              collate_fn=collate_molgraphs, num_workers=args['num_workers'])
-    val_loader = DataLoader(dataset=val_set, batch_size=exp_config['batch_size'],
-                            collate_fn=collate_molgraphs, num_workers=args['num_workers'])
-    test_loader = DataLoader(dataset=test_set, batch_size=exp_config['batch_size'],
-                             collate_fn=collate_molgraphs, num_workers=args['num_workers'])
-
-    exp_config['add_feat_size'] = args['num_OR_logits'] ## non-OR model takes in 100 extra features for each OR seq
-    exp_config['mol2prot_dim'] = args['mol2prot_dim']
-    #exp_config['max_seq_len'] = args['max_seq_len']
-    exp_config['max_node_len'] = args['max_node_len']  
-
-    if args['pretrain']:
-        args['num_epochs'] = 0
-        if args['featurizer_type'] == 'pre_train':
-            model = load_pretrained('{}_{}'.format(
-                args['model'], args['dataset'])).to(args['device'])
-        else:
-            model = load_pretrained('{}_{}_{}'.format(
-                args['model'], args['featurizer_type'], args['dataset'])).to(args['device'])
-    elif args['curriculum'] == True:
-        from dgllife.model.model_zoo.mlp_predictor import MLPPredictor
-        ## here we update n_tasks to be the number of tasks in the previous dataset (M2OR usually)
-        exp_config.update({'n_tasks': args['prev_data_n_tasks']})
-        ## Change model to GCN type to load M2OR model temporarily (super hacky)
-        #exp_config.update({'model': 'GCN'})
-        ## Then we initialize an empty GCN model with the same architecture as the previous model
-        model = load_model(exp_config).to(args['device'])
-        gnn_out_feats = model.gnn.hidden_feats[-1]
-        ## plumbing issue - forward pass of GCNORPredictor results in issue loading m2or weights, so 
-        ## we temporarily replace the MLP head with one that matches the shape of M2OR model
-        model.predict = MLPPredictor(2 * gnn_out_feats, exp_config['predictor_hidden_feats'],
-                                            exp_config['n_tasks'], dropout = exp_config['dropout'])
-        ## Now we load the model weights for the previously trained model, in this case Uniprot-M2OR GCN
-        checkpoint = torch.load(args['prev_model_path'] + '/model.pth', map_location=args['device'])
-        model.load_state_dict(checkpoint['model_state_dict'])
-        #$ Now that the model weights are loaded, lets revert n_tasks back to the current dataset's number of tasks (GS-LF)
-        exp_config.update({'n_tasks': args['n_tasks']})
-        #exp_config.update({'model': 'GCN_OR'})
-        
-        # I now initialize a new head for the model, such that the GCN is using the M2oR weights as initialization but the MLP head is new for GS-LF
-        gnn_out_feats = model.gnn.hidden_feats[-1]
-        ## go back and change MLP head to match size to fit OR logits and mol emb
-        model.predict = MLPPredictor(2 * gnn_out_feats + exp_config['add_feat_size'], exp_config['predictor_hidden_feats'],
-                                exp_config['n_tasks'], exp_config['dropout'])
-        model = model.to(args['device'])
-        loss_criterion = nn.BCEWithLogitsLoss(reduction='none')
-        optimizer = Adam(model.parameters(), lr=exp_config['lr'],
-                         weight_decay=exp_config['weight_decay'])
-        stopper = EarlyStopping(patience=exp_config['patience'],
-                                filename=args['result_path'] + '/model.pth',
-                                metric=args['metric'])
-    else:
-        model = load_model(exp_config).to(args['device'])
-        loss_criterion = nn.BCEWithLogitsLoss(reduction='none')
-        optimizer = Adam(model.parameters(), lr=exp_config['lr'],
-                         weight_decay=exp_config['weight_decay'])
-        stopper = EarlyStopping(patience=exp_config['patience'],
-                                filename=args['result_path'] + '/model.pth',
-                                metric=args['metric'])
-    ## generate seq_mask, seq_embeddings
-    import pandas as pd
-    mol_OR = pd.read_csv('data/datasets/M2OR_original_mol_OR_pairs.csv', sep = ';')
-    top_seqs = mol_OR['mutated_Sequence'].value_counts()[0:args['num_OR_logits']].keys().tolist()
-    max_seq_len = len(max(top_seqs, key=len))        
-    seq_masks = torch.zeros((len(top_seqs), max_seq_len))
-    print(seq_masks.shape)
-    for i in range(len(top_seqs)):
-        seq_masks[i, :len(top_seqs[i])] = 1
-        top_seqs[i] += "<pad>"*(max_seq_len - len(top_seqs[i]))
-    exp_config['max_seq_len'] = max_seq_len
-    from data.m2or import esm_embed
-    seq_embeddings = esm_embed(top_seqs, per_residue=True, random_weights=False, esm_model_version = '650m') ## output shape: (100, max_seq_len, embedding_dim)
-    print(len(seq_embeddings))#.shape)
-    seq_emb_arr = np.dstack(seq_embeddings)
-    seq_embeddings = torch.FloatTensor(np.rollaxis(seq_emb_arr, -1))#.cuda()
-    print(seq_embeddings.shape)
-    
-    ## here we update n_tasks to be the number of tasks in the previous dataset (M2OR usually)
-    exp_config.update({'n_tasks': args['prev_data_n_tasks']})
-    ## Change model to GCN type to load M2OR model temporarily (super hacky)
-    exp_config.update({'model': 'MolOR'})
-    
-    exp_config.update({'add_feat_size' : args['prot_dim']}) #args['prot_dim'] NOTE: NEED LESS HACKY WAY
-    ## Load OR predictive model to generate OR preds as features
-    exp_config['num_gnn_layers'] = 2 ## MolOR is 2 GNN layers
-    exp_config['predictor_hidden_feats'] = 128 ## MolOR is 256 hidden feats
-    exp_config['gnn_hidden_feats'] = 256 ## MolOR is 256 hidden feats
-    OR_model = load_model(exp_config).to(args['device'])
-    ## Now we load the model weights for the previously trained model, in this case Uniprot-M2OR GCN
-    OR_checkpoint = torch.load(args['prev_model_path'] + '/model.pth', map_location=args['device'])
-    OR_model.load_state_dict(OR_checkpoint['model_state_dict'])
-    OR_model.eval()
-    
-    #$ Now that the model weights are loaded, lets revert n_tasks back to the current dataset's number of tasks (GS-LF)
-    #OR_logits = torch.zeros(len(train_loader), exp_config['batch_size'], seq_embeddings.shape[0])#.cuda()
-    OR_logits = torch.zeros(len(dataset), seq_embeddings.shape[0])#.cuda()
-    ## Check if file exists at 'data/datasets/train_OR_logits.pt'
-    ## If so, load it and skip training
-    if os.path.isfile('data/datasets/FIXED_weighed_GS_LF_{}_ORs_logits.pt'.format(args['num_OR_logits'])):
-        OR_logits = torch.load('data/datasets/FIXED_GS_LF_{}_ORs_logits.pt'.format(args['num_OR_logits']))
-    else:
-        with torch.no_grad():
-            for batch_id, batch_data in enumerate(full_loader):
-                smiles, bg, labels, masks, ids, node_masks = batch_data
-                #print(ids)
-
-                #print('seq embed shape')
-                #print(seq_embeddings.shape)
-                seq_masks = seq_masks.cuda()
-                node_masks = node_masks.cuda()
-
-                if len(smiles) == 1:
-                    # Avoid potential issues with batch normalization
-                    continue
-
-                labels, masks = labels.to(args['device']), masks.to(args['device'])
-                ## Is it faster to iterate through each mol and generate logits for all 100 sequences by copying
-                ## over graph features vs what we do now? Unlikely since torch.repeat is faster.
-                #OR_logits = torch.zeros((len(smiles), seq_embeddings.shape[0])).cuda()
-                for i in range(seq_embeddings.shape[0]):
-                    ## Get i-th sequence embedding
-                    seq_embed = seq_embeddings[i]
-                    #print('seq embed shape out of dataloader')
-                    #print(seq_embed.shape)
-                    seq_mask = seq_masks[i]
-                    # Copy len(smiles) times into tensor of shape (len(smiles), seq_embed.shape)
-                    seq_embed = seq_embed.repeat(len(smiles), 1, 1)
-                    seq_mask = seq_mask.repeat(len(smiles), 1)
-                    #print(predict_OR_feat(args, aux_model, bg, seq_embed, seq_mask, node_masks).shape)
-                    #print('dimension of logits tensor index')
-                    #print(train_OR_logits[batch_id, :, i].shape)
-                    OR_logits[batch_id * exp_config['batch_size']:batch_id * exp_config['batch_size'] + exp_config['batch_size'], i] = predict_OR_feat(args, OR_model, bg, seq_embed, seq_mask, node_masks).squeeze(dim=1)
-                #print(train_OR_logits)
-            print('done embedding gs_lf')
-            torch.save(OR_logits, 'data/datasets/FIXED_weighed_GS_LF_{}_ORs_logits.pt'.format(args['num_OR_logits']))
-
-    print(OR_logits.shape)
-    ## Get raw binarized labels for ORs
-    #train_OR_logits = torch.round(torch.sigmoid(train_OR_logits))
-    #val_OR_logits = torch.round(torch.sigmoid(val_OR_logits))
-    #test_OR_logits = torch.round(torch.sigmoid(test_OR_logits))
-
 
 if __name__ == '__main__':
     import os
@@ -548,6 +492,7 @@ if __name__ == '__main__':
                         help= "For passing OR logits as features, specify n_tasks of previous dataset to correctly load saved model.")
     parser.add_argument('-pmp', '--prev_model_path', type=str, default='M2OR_Uniprot_original_GCN',
                         help = 'For model to generate OR logits, specify path to trained model to correctly load model.')
+    parser.add_argument('-pl', '--prev_model_loss', choices=['weighted_loss', 'unweighted_loss'], default='unweighted_loss',)
     ## Seeded as random_state = 42
     parser.add_argument('-s', '--split', choices=['scaffold', 'random'], default='scaffold',
                         help='Dataset splitting method (default: scaffold)')
@@ -565,6 +510,7 @@ if __name__ == '__main__':
                         help='Number of processes for data loading (default: 0)')
     parser.add_argument('-pe', '--print-every', type=int, default=20,
                         help='Print the training progress every X mini-batches')
+    parser.add_argument('-gnn_attend', '--gnn_attended_feats', type=int, default=None)
     parser.add_argument('-rp', '--result-path', type=str, default='classification_results',
                         help='Path to save training results (default: classification_results)')
     args = parser.parse_args().__dict__
@@ -650,7 +596,9 @@ if __name__ == '__main__':
         args['n_tasks'] = dataset.n_tasks
         train_set, val_set, test_set = split_dataset(args, dataset)
         exp_config = get_configure(args['model'], args['featurizer_type'], args['dataset'])
-        generate_OR_logits(args, exp_config, train_set, val_set, test_set, dataset)
-        #main(args, exp_config, train_set, val_set, test_set)
+        
+        # to generate OR logits, use this function
+        #generate_OR_logits(args, exp_config, train_set, val_set, test_set, dataset)
+        main(args, exp_config, train_set, val_set, test_set)
         
         

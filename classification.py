@@ -110,7 +110,8 @@ def main(args, exp_config, train_set, val_set, test_set):
     print('val {} {:.4f}'.format(args['metric'], val_score))
     print('test {} {:.4f}'.format(args['metric'], test_score))
 
-    with open(args['result_path'] + '/eval.txt', 'w') as f:
+    with open(args['result_path'] + '/' + str(args['seed']) + '_eval.txt', 'w') as f:
+    #with open(args['result_path'] + '/eval.txt', 'w') as f:
         if not args['pretrain']:
             f.write('Best val {}: {}\n'.format(args['metric'], stopper.best_score))
         f.write('Val {}: {}\n'.format(args['metric'], val_score))
@@ -175,67 +176,75 @@ if __name__ == '__main__':
     else:
         args['device'] = torch.device('cpu')
 
-    args = init_featurizer(args)
-    mkdir_p(args['result_path'])
-    smiles_to_g = SMILESToBigraph(add_self_loop=True, node_featurizer=args['node_featurizer'],
-                                  edge_featurizer=args['edge_featurizer'])
+    seeds = [42, 63, 7, 24, 32]
     
-    if args['dataset'] == 'M2OR':
-        from data.m2or import M2OR
-        dataset = M2OR(smiles_to_graph=smiles_to_g, 
-                    n_jobs=1 if args['num_workers'] == 0 else args['num_workers'],
-                    preprocess=args['preprocess'])
-    elif args['dataset'] == 'GS_LF':
-        from data.m2or import GS_LF
-        dataset = GS_LF(smiles_to_graph=smiles_to_g,
-                    n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'M2OR_Pairs':
-        from data.m2or import M2OR_Pairs
-        dataset = M2OR_Pairs(smiles_to_graph=smiles_to_g,
-                    n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    
-    """
-    if args['dataset'] == 'MUV':
-        from dgllife.data import MUV
-        dataset = MUV(smiles_to_graph=smiles_to_g,
-                      n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'BACE':
-        from dgllife.data import BACE
-        dataset = BACE(smiles_to_graph=smiles_to_g,
-                       n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'BBBP':
-        from dgllife.data import BBBP
-        dataset = BBBP(smiles_to_graph=smiles_to_g,
-                       n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'ClinTox':
-        from dgllife.data import ClinTox
-        dataset = ClinTox(smiles_to_graph=smiles_to_g,
-                          n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'SIDER':
-        from dgllife.data import SIDER
-        dataset = SIDER(smiles_to_graph=smiles_to_g,
-                        n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'ToxCast':
-        from dgllife.data import ToxCast
-        dataset = ToxCast(smiles_to_graph=smiles_to_g,
-                          n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'HIV':
-        from dgllife.data import HIV
-        dataset = HIV(smiles_to_graph=smiles_to_g,
-                      n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'PCBA':
-        from dgllife.data import PCBA
-        dataset = PCBA(smiles_to_graph=smiles_to_g,
-                       n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'Tox21':
-        from dgllife.data import Tox21
-        dataset = Tox21(smiles_to_graph=smiles_to_g,
-                        n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    else:
-        raise ValueError('Unexpected dataset: {}'.format(args['dataset']))
-    """
+    for seed in seeds:
+        args['seed'] = seed
+        print('SEED NO: ' + str(seed))
+        torch.manual_seed(seed)
 
-    args['n_tasks'] = dataset.n_tasks
-    train_set, val_set, test_set = split_dataset(args, dataset)
-    exp_config = get_configure(args['model'], args['featurizer_type'], args['dataset'])
-    main(args, exp_config, train_set, val_set, test_set)
+
+        args = init_featurizer(args)
+        mkdir_p(args['result_path'])
+        smiles_to_g = SMILESToBigraph(add_self_loop=True, node_featurizer=args['node_featurizer'],
+                                    edge_featurizer=args['edge_featurizer'])
+        
+        if args['dataset'] == 'M2OR':
+            from data.m2or import M2OR
+            dataset = M2OR(smiles_to_graph=smiles_to_g, 
+                        n_jobs=1 if args['num_workers'] == 0 else args['num_workers'],
+                        preprocess=args['preprocess'])
+        elif args['dataset'] == 'GS_LF':
+            from data.m2or import GS_LF
+            dataset = GS_LF(smiles_to_graph=smiles_to_g,
+                        n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
+        elif args['dataset'] == 'M2OR_Pairs':
+            from data.m2or import M2OR_Pairs
+            dataset = M2OR_Pairs(smiles_to_graph=smiles_to_g,
+                        n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
+        
+        """
+        if args['dataset'] == 'MUV':
+            from dgllife.data import MUV
+            dataset = MUV(smiles_to_graph=smiles_to_g,
+                        n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
+        elif args['dataset'] == 'BACE':
+            from dgllife.data import BACE
+            dataset = BACE(smiles_to_graph=smiles_to_g,
+                        n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
+        elif args['dataset'] == 'BBBP':
+            from dgllife.data import BBBP
+            dataset = BBBP(smiles_to_graph=smiles_to_g,
+                        n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
+        elif args['dataset'] == 'ClinTox':
+            from dgllife.data import ClinTox
+            dataset = ClinTox(smiles_to_graph=smiles_to_g,
+                            n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
+        elif args['dataset'] == 'SIDER':
+            from dgllife.data import SIDER
+            dataset = SIDER(smiles_to_graph=smiles_to_g,
+                            n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
+        elif args['dataset'] == 'ToxCast':
+            from dgllife.data import ToxCast
+            dataset = ToxCast(smiles_to_graph=smiles_to_g,
+                            n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
+        elif args['dataset'] == 'HIV':
+            from dgllife.data import HIV
+            dataset = HIV(smiles_to_graph=smiles_to_g,
+                        n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
+        elif args['dataset'] == 'PCBA':
+            from dgllife.data import PCBA
+            dataset = PCBA(smiles_to_graph=smiles_to_g,
+                        n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
+        elif args['dataset'] == 'Tox21':
+            from dgllife.data import Tox21
+            dataset = Tox21(smiles_to_graph=smiles_to_g,
+                            n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
+        else:
+            raise ValueError('Unexpected dataset: {}'.format(args['dataset']))
+        """
+
+        args['n_tasks'] = dataset.n_tasks
+        train_set, val_set, test_set = split_dataset(args, dataset)
+        exp_config = get_configure(args['model'], args['featurizer_type'], args['dataset'])
+        main(args, exp_config, train_set, val_set, test_set)

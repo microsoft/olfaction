@@ -9,6 +9,7 @@ from dgl.data.utils import get_download_dir, download, _get_dgl_url
 from dgllife.data.csv_dataset import MoleculeCSVDataset
 import torch
 from utils import ROOT_DIR
+import os
 #.csv_dataset import MoleculeCSVDataset
 
 __all__ = ['Tox21']
@@ -289,10 +290,17 @@ class M2OR_Pairs(MoleculeCSVDataset):
             for i in range(len(sequences)): ## pad sequence to max sequence length
                 sequences[i] += "<pad>"*(self.max_seq_len - len(sequences[i]))
             #print(sequences)
-            seq_embeddings = esm_embed(sequences, per_residue=True, random_weights=esm_random_weights, esm_model_version = esm_model) ## output shape: (batch_size, max_seq_len, embedding_dim)
+            if os.path.exists('data/datasets/{}_per_residue_seq_embeddings.npy'.format(esm_model)):
+                seq_embeddings = torch.tensor(np.load('data/datasets/{}_seq_embeddings.npy'.format(esm_model)))
+            else:
+                seq_embeddings = esm_embed(sequences, per_residue=True, random_weights=esm_random_weights, esm_model_version = esm_model) ## output shape: (batch_size, max_seq_len, embedding_dim)
+                np.save('data/datasets/{}_per_residue_seq_embeddings.npy'.format(esm_model), seq_embeddings)
         else:
-            seq_embeddings = esm_embed(sequences, random_weights=esm_random_weights, esm_model_version = esm_model) ## output shape: (batch_size, embedding_dim)
-        
+            if os.path.exists('data/datasets/{}_seq_embeddings.npy'.format(esm_model)):
+                seq_embeddings = torch.tensor(np.load('data/datasets/{}_seq_embeddings.npy'.format(esm_model)))
+            else:
+                seq_embeddings = esm_embed(sequences, random_weights=esm_random_weights, esm_model_version = esm_model) ## output shape: (batch_size, embedding_dim)
+                np.save('data/datasets/{}_seq_embeddings.npy'.format(esm_model), seq_embeddings)
         ## define dictionary where keys are from sequences_dict, and values are from self.seq_embeddings
         self.seq_embeddings_dict = dict(zip(self.sequences_dict.keys(), seq_embeddings))
         if weighted_samples:

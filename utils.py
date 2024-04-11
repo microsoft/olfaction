@@ -267,6 +267,7 @@ def load_model(exp_configure):
             activation=[F.relu] * exp_configure['num_gnn_layers'],
             add_feats=exp_configure['add_feat_size'],
             prot_feats=exp_configure['add_feat_size'],
+            gnn_attended_feats=exp_configure['gnn_attended_feats'], # set to same as protein emb (1280) to do predictions on mean-aggr attended embeddings.
             residual=[exp_configure['residual']] * exp_configure['num_gnn_layers'],
             mol2_prot=exp_configure['mol2prot_dim'],
             max_seq_len=exp_configure['max_seq_len'],
