@@ -27,8 +27,8 @@ def run_a_train_epoch(args, epoch, model, data_loader, loss_criterion, optimizer
     for batch_id, batch_data in enumerate(data_loader):
         if args['cross_attention']:
             smiles, bg, labels, masks, ids, seq_ids, sequences_dict, seq_embeddings, sample_weights, seq_mask, node_mask = batch_data
-            seq_mask = seq_mask.cuda()
-            node_mask = node_mask.cuda()
+            seq_mask = seq_mask.to(args['device'])
+            node_mask = node_mask.to(args['device'])
             """
             seq_emb_arr = np.dstack(seq_embeddings)
             seq_embeddings_tensor = torch.FloatTensor(np.rollaxis(seq_emb_arr, -1)).cuda()
@@ -49,7 +49,8 @@ def run_a_train_epoch(args, epoch, model, data_loader, loss_criterion, optimizer
 
         #print(logits)
         #print(logits.shape)
-        sample_weights = sample_weights.cuda()
+        #sample_weights = sample_weights.cuda()
+        sample_weights = sample_weights.to(args['device'])
         #print (seq_embeddings_.shape)
         
         if len(smiles) == 1:
@@ -87,8 +88,10 @@ def run_an_eval_epoch(args, model, data_loader):
         for batch_id, batch_data in enumerate(data_loader):
             if args['cross_attention']:
                 smiles, bg, labels, masks, ids, seq_ids, sequences_dict, seq_embeddings, sample_weights, seq_mask, node_mask = batch_data
-                seq_mask = seq_mask.cuda()
-                node_mask = node_mask.cuda()
+                seq_mask = seq_mask.to(args['device'])
+                node_mask = node_mask.to(args['device'])
+                #seq_mask = seq_mask.cuda()
+                #node_mask = node_mask.cuda()
                 """
                 seq_emb_arr = np.dstack(seq_embeddings)
                 seq_embeddings_tensor = torch.FloatTensor(np.rollaxis(seq_emb_arr, -1)).cuda()
@@ -323,6 +326,7 @@ if __name__ == '__main__':
         ## set cuda device
         device = torch.device('cuda:{}'.format(args['device']))
         torch.cuda.set_device(device)
+        print('Using GPU: {}'.format(args['device']))
         args['device'] = device
     else:
         device = torch.device('cpu')

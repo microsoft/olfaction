@@ -407,7 +407,10 @@ def predict_OR_feat(args, model, bg, add_feat = None, seq_mask = None, node_mask
             if seq_mask is None and node_mask is None: ## OR logits or ESM fixed-vector emb
                 return model(bg, node_feats, add_feat)
             else: ## cross-attention forward pass
-                return model(bg, node_feats, add_feat, seq_mask, node_mask)
+                if args['model'] == "MolOR":
+                    return model(bg, node_feats, add_feat, seq_mask, node_mask, args['device'])
+                else:
+                    return model(bg, node_feats, add_feat, seq_mask, node_mask)
         return model(bg, node_feats)
     elif args['featurizer_type'] == 'pre_train':
         node_feats = [

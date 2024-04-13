@@ -291,7 +291,7 @@ class M2OR_Pairs(MoleculeCSVDataset):
                 sequences[i] += "<pad>"*(self.max_seq_len - len(sequences[i]))
             #print(sequences)
             if os.path.exists('data/datasets/{}_per_residue_seq_embeddings.npy'.format(esm_model)):
-                seq_embeddings = torch.tensor(np.load('data/datasets/{}_seq_embeddings.npy'.format(esm_model)))
+                seq_embeddings = torch.tensor(np.load('data/datasets/{}_per_residue_seq_embeddings.npy'.format(esm_model)))
             else:
                 seq_embeddings = esm_embed(sequences, per_residue=True, random_weights=esm_random_weights, esm_model_version = esm_model) ## output shape: (batch_size, max_seq_len, embedding_dim)
                 np.save('data/datasets/{}_per_residue_seq_embeddings.npy'.format(esm_model), seq_embeddings)
@@ -427,10 +427,11 @@ def esm_embed(sequences, device=torch.device('cuda:0' if torch.cuda.is_available
         batch_labels, batch_strs, batch_tokens = batch_converter(data)
         batch_lens = (batch_tokens != esm_alphabet.padding_idx).sum(1)
 
+        layer_extracted = 33 if esm_model_version == '650m' else 36 ## 33 for 650m, 36 for 3B is last layer
         # Extract per-residue representations (on CPU)
         with torch.inference_mode():
-            results = esm_model(batch_tokens.to(device), repr_layers=[33], return_contacts=False)
-        token_representations = results["representations"][33]
+            results = esm_model(batch_tokens.to(device), repr_layers=[layer_extracted], return_contacts=False)
+        token_representations = results["representations"][layer_extracted]
         #print(token_representations.shape)
 
         # Generate per-sequence representations via averaging

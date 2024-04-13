@@ -619,7 +619,7 @@ class MolORPredictor(nn.Module):
             self.predict = MLPPredictor(2 * gnn_out_feats, predictor_hidden_feats,
                                     n_tasks, predictor_dropout)
         """
-    def forward(self, bg, feats, add_feats = None, seq_mask = None, node_mask = None):
+    def forward(self, bg, feats, add_feats = None, seq_mask = None, node_mask = None, device = None):
         """Graph-level regression/soft classification.
 
         Parameters
@@ -674,9 +674,11 @@ class MolORPredictor(nn.Module):
         ## We pad the sequence tensor in the cross_attn forward pass
         
         ## set add_feats, batch_node_feats to cuda
-        if torch.cuda.is_available():
-            add_feats = add_feats.cuda()
-            batch_node_feats = batch_node_feats.cuda()
+        if torch.cuda.is_available() and device is not None:
+            add_feats = add_feats.to(device)
+            batch_node_feats = batch_node_feats.to(device)
+            #add_feats = add_feats.cuda()
+            #batch_node_feats = batch_node_feats.cuda()
         
         #print("ADD FEATS:") 
         #print(add_feats)
@@ -697,7 +699,7 @@ class MolORPredictor(nn.Module):
         
         return self.predict(graph_feats)
 
-    def generate_attention_maps(self, bg, feats, add_feats = None, seq_mask = None, node_mask = None):
+    def generate_attention_maps(self, bg, feats, add_feats = None, seq_mask = None, node_mask = None, device = None):
         node_feats = self.gnn(bg, feats) ## problem causing NaNs is here
         #print('node feats')
         #print(node_feats)
@@ -718,9 +720,11 @@ class MolORPredictor(nn.Module):
             counter+=n_nodes
             #batch_node_feats[i][:graphs[i].num_nodes()] = graphs[i].ndata['logits']
 
-        if torch.cuda.is_available():
-            add_feats = add_feats.cuda()
-            batch_node_feats = batch_node_feats.cuda()
+        if torch.cuda.is_available() and device is not None:
+            add_feats = add_feats.to(device)
+            batch_node_feats = batch_node_feats.to(device)
+            #add_feats = add_feats.cuda()
+            #batch_node_feats = batch_node_feats.cuda()
 
         prot_attention_maps, mol_attention_maps = self.cross_attn.gen_attn_maps(add_feats, batch_node_feats, seq_mask, node_mask)
 
