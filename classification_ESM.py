@@ -322,12 +322,18 @@ if __name__ == '__main__':
                         help='Indices of GPU ids to use (default: 0). Past in as id,id2,id3,...')
     args = parser.parse_args().__dict__
 
+    device_id = args['device']
+    cuda_device = "cuda:" + device_id
     if torch.cuda.is_available():
         ## set cuda device
-        device = torch.device('cuda:{}'.format(args['device']))
-        torch.cuda.set_device(device)
-        print('Using GPU: {}'.format(args['device']))
+        device = torch.device(cuda_device)
+        print(f"Using GPU: {device_id}")
+        #print('Using GPU: {}'.format(args['device']))
         args['device'] = device
+        #device = torch.device('cuda:{}'.format(args['device']))
+        #torch.cuda.set_device(device)
+        #print('Using GPU: {}'.format(args['device']))
+        #args['device'] = device
     else:
         device = torch.device('cpu')
         torch.cuda.set_device(device)
