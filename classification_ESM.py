@@ -320,6 +320,8 @@ if __name__ == '__main__':
                         help='Path to save training results (default: classification_results)')
     parser.add_argument('-device', '--device', type=str, default='0',
                         help='Indices of GPU ids to use (default: 0). Past in as id,id2,id3,...')
+    parser.add_argument('-sd', '--seed', type=int, default=42,
+                        help='Random seed for torch')
     args = parser.parse_args().__dict__
 
     device_id = args['device']
@@ -339,6 +341,10 @@ if __name__ == '__main__':
         torch.cuda.set_device(device)
         args['device'] = device
 
+        seed = args['seed']
+    print('SEED NO: ' + str(seed))
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     args = init_featurizer(args)
     mkdir_p(args['result_path'])
     smiles_to_g = SMILESToBigraph(add_self_loop=True, node_featurizer=args['node_featurizer'],
