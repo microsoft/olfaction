@@ -336,6 +336,7 @@ if __name__ == '__main__':
         #torch.cuda.set_device(device)
         #print('Using GPU: {}'.format(args['device']))
         #args['device'] = device
+        seed = args['seed']
     else:
         device = torch.device('cpu')
         torch.cuda.set_device(device)

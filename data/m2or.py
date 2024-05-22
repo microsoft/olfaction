@@ -290,18 +290,20 @@ class M2OR_Pairs(MoleculeCSVDataset):
             for i in range(len(sequences)): ## pad sequence to max sequence length
                 sequences[i] += "<pad>"*(self.max_seq_len - len(sequences[i]))
             #print(sequences)
-            if os.path.exists('data/datasets/{}_per_residue_seq_embeddings.pth'.format(esm_model)):
-                seq_embeddings = torch.load('data/datasets/{}_per_residue_seq_embeddings.pth'.format(esm_model))
+            path = 'data/datasets/{}_per_residue_seq_embeddings.pth'.format(esm_model) if not esm_random_weights else '{}_per_residue_seq_embeddings_random.pth'.format(esm_model)
+            if os.path.exists(path):
+                seq_embeddings = torch.load(path)
             else:
                 seq_embeddings = esm_embed(sequences, per_residue=True, random_weights=esm_random_weights, esm_model_version = esm_model) ## output shape: (batch_size, max_seq_len, embedding_dim)
-                torch.save(seq_embeddings, 'data/datasets/{}_per_residue_seq_embeddings.pth'.format(esm_model))
+                torch.save(seq_embeddings, path)
                 #np.save('data/datasets/{}_per_residue_seq_embeddings.npy'.format(esm_model), seq_embeddings)
         else:
-            if os.path.exists('data/datasets/{}_seq_embeddings.pth'.format(esm_model)):
-                seq_embeddings = torch.load('data/datasets/{}_seq_embeddings.pth'.format(esm_model))
+            path = 'data/datasets/{}_seq_embeddings.pth'.format(esm_model) if not esm_random_weights else '{}_seq_embeddings_random.pth'.format(esm_model)
+            if os.path.exists(path):
+                seq_embeddings = torch.load(path)
             else:
                 seq_embeddings = esm_embed(sequences, random_weights=esm_random_weights, esm_model_version = esm_model) ## output shape: (batch_size, embedding_dim)
-                torch.save(seq_embeddings, 'data/datasets/{}_seq_embeddings.pth'.format(esm_model))        ## define dictionary where keys are from sequences_dict, and values are from self.seq_embeddings
+                torch.save(seq_embeddings, path)        ## define dictionary where keys are from sequences_dict, and values are from self.seq_embeddings
         self.seq_embeddings_dict = dict(zip(self.sequences_dict.keys(), seq_embeddings))
         if weighted_samples:
             self.sample_weights = torch.tensor(df['sample_weight'].astype(float))
@@ -849,9 +851,9 @@ class GS_LF_OR(MoleculeCSVDataset):
             Id for the ith datapoint, returned only when ``self.load_full`` is True.
         """
         if self.load_full:
-            return self.smiles[item], self.graphs[item], self.labels[item], \
+            return item, self.smiles[item], self.graphs[item], self.labels[item], \
                    self.mask[item], self.id[item], self.graph_mask[item]
         else:
-            return self.smiles[item], self.graphs[item], self.labels[item], self.mask[item]
+            return item, self.smiles[item], self.graphs[item], self.labels[item], self.mask[item]
         
         

@@ -181,6 +181,8 @@ def collate_molgraphs(data):
         smiles, graphs, labels = map(list, zip(*data))
     elif len(data[0]) == 6:
         smiles, graphs, labels, masks, ids, node_mask = map(list, zip(*data))
+    elif len(data[0]) == 7:
+        idxs, smiles, graphs, labels, masks, ids, node_mask = map(list, zip(*data))
     elif len(data[0]) == 9:
         smiles, graphs, labels, masks, ids, seq_ids, sequences_dict, seq_embeddings, sample_weights = map(list, zip(*data))
     elif len(data[0]) == 11:
@@ -207,6 +209,10 @@ def collate_molgraphs(data):
         node_mask = np.vstack(node_mask)
         node_mask = torch.FloatTensor(node_mask)#.cuda()
         return smiles, bg, labels, masks, ids, node_mask
+    elif len(data[0]) == 7:
+        node_mask = np.vstack(node_mask)
+        node_mask = torch.FloatTensor(node_mask)
+        return idxs, smiles, bg, labels, masks, ids, node_mask
     elif len(data[0]) == 11:
         seq_emb_arr = np.dstack(seq_embeddings)
         seq_embeddings = torch.FloatTensor(np.rollaxis(seq_emb_arr, -1))#.cuda()
