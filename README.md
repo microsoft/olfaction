@@ -1,14 +1,8 @@
-# Project
+# Mapping the combinatorial coding between olfactory receptors and perception with deep learning
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+This repository contains the source code, plotting notebooks, and training data for the paper 'Mapping the combinatorial coding between olfactory receptors and perception with deep learning'.
 
-As the maintainer of this project, please make a few updates:
-
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+We will add a Zenodo link shortly after preprint, containing model weights for the odorant-receptor and odorant-percept models. We will also include the OR logits for both the HORDE and M2OR receptor datasets, to run percept prediction with the OR activations as supplementary features. We are also working to add a custom dataloader for running inference with both models shortly, so users can score larger datasets of molecules for potential receptor and percept codes. For an example of doing so with the MolOR model on the HORDE set of receptor sequences, refer to 'scripts/generate_OR_predictions_pseudogenes.py'.
 
 ## Contributing
 
