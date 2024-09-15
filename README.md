@@ -1,14 +1,13 @@
-# Project
+# Mapping the combinatorial coding between olfactory receptors and perception with deep learning
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+This repository contains the source code, plotting notebooks, and training data for the paper 'Mapping the combinatorial coding between olfactory receptors and perception with deep learning'. This repository is actively in development, and we will add more instructions on training your own olfactory models on custom datasets, running inference, and generating activation maps for novel odorants.
 
-As the maintainer of this project, please make a few updates:
+We will add a Zenodo link shortly after preprint, containing model weights for the odorant-receptor and odorant-percept models. We will also include the OR logits for both the HORDE and M2OR receptor datasets, to run percept prediction with the OR activations as supplementary features. We are also working to add a custom dataloader for running inference with both models shortly, so users can score larger datasets of molecules for potential receptor and percept codes. For an example of doing so with the MolOR model on the HORDE set of receptor sequences, refer to `scripts/generate_OR_predictions_pseudogenes.py`.
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+Files of note:
+-  `classification_ESM.py`: code for training odorant-receptor models, using fused per-residue ESM embeddings. Requires ESM embeddings pre-computed on disk.
+- `classification_OR_feat_ESM.py`: code for training odorant-percept models, using predicted activations from MolOR. Requires OR activation logits pre-computed on disk, or will run inference first to generate for given dataset.
+- `scripts/run_OR_percept_ablations_HORDE.sh`: script to reproduce main ablation in paper, scaling # of OR activations from HORDE dataset for odorant percept prediction (after downloading data from zenodo and dummping in `data/datasets`, simply run `bash run_OR_percept_ablations_HORDE.sh`).
 
 ## Contributing
 

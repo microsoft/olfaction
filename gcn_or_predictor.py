@@ -206,7 +206,10 @@ class GCNORPredictor(nn.Module):
         """
         node_feats = self.gnn(bg, feats)
         graph_feats = self.readout(bg, node_feats)
+        if add_feats.dim() > 2: #(n_samples, 1, 1280) --> (nsamples, 1280)
+            add_feats = add_feats.squeeze(1)
         ## Concatenate OR features to graph_feats before prediction
+        
         if add_feats is not None:
             graph_feats = torch.cat((graph_feats, add_feats), dim=1)
         
@@ -263,16 +266,7 @@ class CrossAttention(nn.Module):
             # Linear layer for aggregation
             self.linear1 = nn.Linear(D2, 1)
             self.linear2 = nn.Linear(D2, 1)
-    """
-    def scaled_dot_product_attention(self, query, key, value):
-        d_k = query.size(-1)
-        scores = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k).float())
-        #attention_weights = torch.softmax(scores, dim=-1) ## try relu here, then softmax at the end w/ the MLP prediction head
-        attention_weights = torch.relu(scores) ## TODO: - visualize attention weights here
-        #NOTE : run with softmax fix
-        attended_values = torch.matmul(attention_weights, value)
-        return attended_values
-    """
+
     def scaled_attention_weights(self, query, key, value):
         d_k = query.size(-1)
         scores = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k).float())
@@ -364,7 +358,7 @@ class CrossAttention(nn.Module):
         # output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1) # now the output_vec is size (1, 2* D1)
         return output_vec
     
-class CrossAttention_2(nn.Module):
+class OdorantReceptorCrossAttention(nn.Module):
     
     """Cross-Attention Block of ligand-protein model, that takes in two 2d tensors for the molecular and protein embeddings, collapses them to the same
     dimension, and performs a cross-attention between them. 
@@ -376,7 +370,7 @@ class CrossAttention_2(nn.Module):
     """
 
     def __init__(self, D1, D2, mol2prot = False):
-        super(CrossAttention_2, self).__init__()
+        super(OdorantReceptorCrossAttention, self).__init__()
 
         # Define the trainable weight matrices for query, key, and value transformations
         if mol2prot: ## linear mapping to expand mol tensor to protein tensor size
@@ -488,19 +482,7 @@ class CrossAttention_2(nn.Module):
         output_vec = torch.cat((protein_vec, mol_vec), dim=1)
         ## concat into output_vector (size: (batch_size, prot_seq_len + node_len))
         # output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1)
-        return output_vec    
-
-        # NOTE: code below does mean aggregation over residue + atoms, before concat
-        # NOTE: below, we're temporarily trying to use the mean of the attended values as the fixed size tensor 
-        """
-        fixed_size_tensor1 = attended_values_tensor1.mean(dim=1) # B x D1
-        fixed_size_tensor2 = attended_values_tensor2.mean(dim=1) # B x D1 (assuming projection to prot dim space)
-        """
-        output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1)
-        ## concat into output_vector (size: (batch_size, prot_seq_len + node_len))
-        # output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1) # now the output_vec is size (1, 2* D1)
-        return output_vec    
-
+        return output_vec
     
 
     
@@ -597,7 +579,7 @@ class MolORPredictor(nn.Module):
         
         #self.cross_attn = CrossAttention_2(prot_feats, gnn_out_feats, mol2prot = mol2_prot)
         # NOTE: trying with torch implementation
-        self.cross_attn = CrossAttention_2(prot_feats, gnn_out_feats, mol2prot = mol2_prot)
+        self.cross_attn = OdorantReceptorCrossAttention(prot_feats, gnn_out_feats, mol2prot = mol2_prot)
 
         gnn_attended_feats = self.gnn.hidden_feats[-1] if gnn_attended_feats is None else gnn_attended_feats # output dimension of mol may differ
         
@@ -725,6 +707,10 @@ class MolORPredictor(nn.Module):
             batch_node_feats = batch_node_feats.to(device)
             #add_feats = add_feats.cuda()
             #batch_node_feats = batch_node_feats.cuda()
+
+        # LayerNorm on minibatch of per-residue protein embeddings, per-node embeddings
+        add_feats = self.prot_norm(add_feats)
+        batch_node_feats = self.mol_norm(batch_node_feats)
 
         prot_attention_maps, mol_attention_maps = self.cross_attn.gen_attn_maps(add_feats, batch_node_feats, seq_mask, node_mask)
 

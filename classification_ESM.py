@@ -29,15 +29,6 @@ def run_a_train_epoch(args, epoch, model, data_loader, loss_criterion, optimizer
             smiles, bg, labels, masks, ids, seq_ids, sequences_dict, seq_embeddings, sample_weights, seq_mask, node_mask = batch_data
             seq_mask = seq_mask.to(args['device'])
             node_mask = node_mask.to(args['device'])
-            """
-            seq_emb_arr = np.dstack(seq_embeddings)
-            seq_embeddings_tensor = torch.FloatTensor(np.rollaxis(seq_emb_arr, -1)).cuda()
-            seq_mask = np.vstack(seq_mask)
-            seq_mask = torch.FloatTensor(seq_mask).cuda()
-            
-            node_mask = np.vstack(node_mask)
-            node_mask = torch.FloatTensor(node_mask).cuda()
-            """
             #print(bg)
             logits = predict_OR_feat(args, model, bg, seq_embeddings, seq_mask, node_mask)
 
@@ -47,12 +38,7 @@ def run_a_train_epoch(args, epoch, model, data_loader, loss_criterion, optimizer
             #seq_embeddings_tensor = torch.FloatTensor(seq_emb_arr).cuda()
             logits = predict_OR_feat(args, model, bg, seq_embeddings)
 
-        #print(logits)
-        #print(logits.shape)
-        #sample_weights = sample_weights.cuda()
-        sample_weights = sample_weights.to(args['device'])
-        #print (seq_embeddings_.shape)
-        
+        sample_weights = sample_weights.to(args['device'])        
         if len(smiles) == 1:
             # Avoid potential issues with batch normalization
             continue
@@ -90,17 +76,6 @@ def run_an_eval_epoch(args, model, data_loader):
                 smiles, bg, labels, masks, ids, seq_ids, sequences_dict, seq_embeddings, sample_weights, seq_mask, node_mask = batch_data
                 seq_mask = seq_mask.to(args['device'])
                 node_mask = node_mask.to(args['device'])
-                #seq_mask = seq_mask.cuda()
-                #node_mask = node_mask.cuda()
-                """
-                seq_emb_arr = np.dstack(seq_embeddings)
-                seq_embeddings_tensor = torch.FloatTensor(np.rollaxis(seq_emb_arr, -1)).cuda()
-                seq_mask = np.vstack(seq_mask)
-                seq_mask = torch.FloatTensor(seq_mask).cuda()
-                node_mask = np.vstack(node_mask)
-                node_mask = torch.FloatTensor(node_mask).cuda()
-                """
-                #print(bg)
                 logits = predict_OR_feat(args, model, bg, seq_embeddings, seq_mask, node_mask)
 
             else:
@@ -109,15 +84,7 @@ def run_an_eval_epoch(args, model, data_loader):
                 #seq_embeddings_tensor = torch.FloatTensor(seq_emb_arr).cuda()
                 logits = predict_OR_feat(args, model, bg, seq_embeddings)
 
-            """
-            smiles, bg, labels, masks, ids, seq_ids, sequences_dict, seq_embeddings, data_quality = batch_data
-            seq_emb_arr = np.vstack(seq_embeddings)
-            seq_embeddings_tensor = torch.FloatTensor(seq_emb_arr).cuda()
-            """
             labels = labels.to(args['device'])
-            #OR_logits = predict(args, aux_model, bg)
-            #logits = predict_OR_feat(args, model, bg, seq_embeddings_tensor)
-            #logits = predict(args, model, bg)
             eval_meter.update(logits, labels, masks)
     return np.mean(eval_meter.compute_metric(args['metric']))
 
@@ -197,29 +164,6 @@ def main(args, exp_config, train_set, val_set, test_set):
                                 filename=args['result_path'] + '/model.pth',
                                 metric=args['metric'])
         #model.load_state_dict(OR_checkpoint['model_state_dict'])
-    
-    """
-    ## here we update n_tasks to be the number of tasks in the previous dataset (M2OR usually)
-    exp_config.update({'n_tasks': args['prev_data_n_tasks']})
-    ## Change model to GCN type to load M2OR model temporarily (super hacky)
-    exp_config.update({'model': 'GCN'})
-    ## Load OR predictive model to generate OR preds as features
-    OR_model = load_model(exp_config).to(args['device'])
-    ## Now we load the model weights for the previously trained model, in this case Uniprot-M2OR GCN
-    OR_checkpoint = torch.load(args['prev_model_path'] + '/model.pth', map_location=args['device'])
-    OR_model.load_state_dict(OR_checkpoint['model_state_dict'])
-    #$ Now that the model weights are loaded, lets revert n_tasks back to the current dataset's number of tasks (GS-LF)
-    exp_config.update({'n_tasks': args['n_tasks']})
-    exp_config.update({'model': 'GCN_OR'})
-    """
-    """
-    ## Load OR predictive model to generate OR preds as features
-    model = load_model(exp_config).to(args['device'])
-    ## Now we load the model weights for the previously trained model, in this case Uniprot-M2OR GCN
-    #model = torch.load(args['prev_model_path'] + '/model.pth', map_location=args['device'])
-    OR_checkpoint = torch.load('m2or_cross_attention_scaffold_08_01_01_fixed_dimension_batch_size_128/model.pth', map_location=args['device'])
-    model.load_state_dict(OR_checkpoint['model_state_dict'])
-    """
     for epoch in range(args['num_epochs']):
         # Train
         #run_a_train_epoch(args, epoch, model, OR_model, train_loader, loss_criterion, optimizer)
@@ -372,53 +316,9 @@ if __name__ == '__main__':
         #args['max_node_len'] = 100
         ## arbitrarily pad to size 100 to account for other datasets to do eval on
         args['max_node_len'] = dataset.max_node_len
+    else: 
+        raise ValueError('Dataset not supported')
         
-        """
-        else:
-        dataset = M2OR_Pairs(smiles_to_graph=smiles_to_g, weighted_samples=args['sample_weight'], 
-                                load_full=True, n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-        """
-    """
-    if args['dataset'] == 'MUV':
-        from dgllife.data import MUV
-        dataset = MUV(smiles_to_graph=smiles_to_g,
-                      n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'BACE':
-        from dgllife.data import BACE
-        dataset = BACE(smiles_to_graph=smiles_to_g,
-                       n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'BBBP':
-        from dgllife.data import BBBP
-        dataset = BBBP(smiles_to_graph=smiles_to_g,
-                       n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'ClinTox':
-        from dgllife.data import ClinTox
-        dataset = ClinTox(smiles_to_graph=smiles_to_g,
-                          n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'SIDER':
-        from dgllife.data import SIDER
-        dataset = SIDER(smiles_to_graph=smiles_to_g,
-                        n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'ToxCast':
-        from dgllife.data import ToxCast
-        dataset = ToxCast(smiles_to_graph=smiles_to_g,
-                          n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'HIV':
-        from dgllife.data import HIV
-        dataset = HIV(smiles_to_graph=smiles_to_g,
-                      n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'PCBA':
-        from dgllife.data import PCBA
-        dataset = PCBA(smiles_to_graph=smiles_to_g,
-                       n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    elif args['dataset'] == 'Tox21':
-        from dgllife.data import Tox21
-        dataset = Tox21(smiles_to_graph=smiles_to_g,
-                        n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])
-    else:
-        raise ValueError('Unexpected dataset: {}'.format(args['dataset']))
-    """
-
     args['n_tasks'] = dataset.n_tasks
     train_set, val_set, test_set = split_dataset(args, dataset)
     exp_config = get_configure(args['model'], args['featurizer_type'], args['dataset'])

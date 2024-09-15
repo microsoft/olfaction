@@ -411,6 +411,7 @@ def predict_OR_feat(args, model, bg, add_feat = None, seq_mask = None, node_mask
         if add_feat is not None:
             #print(node_feats) - good here
             if seq_mask is None and node_mask is None: ## OR logits or ESM fixed-vector emb
+                add_feat = add_feat.to(args['device']) ## move directly to device here
                 return model(bg, node_feats, add_feat)
             else: ## cross-attention forward pass
                 if args['model'] == "MolOR":
