@@ -206,7 +206,10 @@ class GCNORPredictor(nn.Module):
         """
         node_feats = self.gnn(bg, feats)
         graph_feats = self.readout(bg, node_feats)
+        if add_feats.dim() > 2: #(n_samples, 1, 1280) --> (nsamples, 1280)
+            add_feats = add_feats.squeeze(1)
         ## Concatenate OR features to graph_feats before prediction
+        
         if add_feats is not None:
             graph_feats = torch.cat((graph_feats, add_feats), dim=1)
         
@@ -725,6 +728,10 @@ class MolORPredictor(nn.Module):
             batch_node_feats = batch_node_feats.to(device)
             #add_feats = add_feats.cuda()
             #batch_node_feats = batch_node_feats.cuda()
+
+        # LayerNorm on minibatch of per-residue protein embeddings, per-node embeddings
+        add_feats = self.prot_norm(add_feats)
+        batch_node_feats = self.mol_norm(batch_node_feats)
 
         prot_attention_maps, mol_attention_maps = self.cross_attn.gen_attn_maps(add_feats, batch_node_feats, seq_mask, node_mask)
 

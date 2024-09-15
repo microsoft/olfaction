@@ -25,7 +25,6 @@ def run_a_train_epoch(args, epoch, model, data_loader, loss_criterion, optimizer
 
         labels, masks = labels.to(args['device']), masks.to(args['device'])
         logits = predict(args, model, bg)
-        # Mask non-existing labels
         loss = (loss_criterion(logits, labels) * (masks != 0).float()).mean()
         optimizer.zero_grad()
         loss.backward()
