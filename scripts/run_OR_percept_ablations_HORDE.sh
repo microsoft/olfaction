@@ -25,6 +25,9 @@ pmp="m2or_cross_attention_batch_size_128_layernorm_90_10"
 metric="roc_auc_score"
 #metric="pr_auc_score"
 
+# cd to general directory 
+cd ..
+
 mkdir -p "${prev_model_loss}_HORDE"
 
 # Loop over the n_ORs values

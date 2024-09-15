@@ -7,6 +7,7 @@ We will add a Zenodo link shortly after preprint, containing model weights for t
 Files of note:
 -  `classification_ESM.py`: code for training odorant-receptor models, using fused per-residue ESM embeddings. Requires ESM embeddings pre-computed on disk.
 - `classification_OR_feat_ESM.py`: code for training odorant-percept models, using predicted activations from MolOR. Requires OR activation logits pre-computed on disk, or will run inference first to generate for given dataset.
+- `scripts/run_OR_percept_ablations_HORDE.sh`: script to reproduce main ablation in paper, scaling # of OR activations from HORDE dataset for odorant percept prediction (after downloading data from zenodo and dummping in `data/datasets`, simply run `bash run_OR_percept_ablations_HORDE.sh`).
 
 ## Contributing
 
