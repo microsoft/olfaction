@@ -2,7 +2,11 @@
 
 This repository contains the source code, plotting notebooks, and training data for the paper 'Mapping the combinatorial coding between olfactory receptors and perception with deep learning'.
 
-We will add a Zenodo link shortly after preprint, containing model weights for the odorant-receptor and odorant-percept models. We will also include the OR logits for both the HORDE and M2OR receptor datasets, to run percept prediction with the OR activations as supplementary features. We are also working to add a custom dataloader for running inference with both models shortly, so users can score larger datasets of molecules for potential receptor and percept codes. For an example of doing so with the MolOR model on the HORDE set of receptor sequences, refer to 'scripts/generate_OR_predictions_pseudogenes.py'.
+We will add a Zenodo link shortly after preprint, containing model weights for the odorant-receptor and odorant-percept models. We will also include the OR logits for both the HORDE and M2OR receptor datasets, to run percept prediction with the OR activations as supplementary features. We are also working to add a custom dataloader for running inference with both models shortly, so users can score larger datasets of molecules for potential receptor and percept codes. For an example of doing so with the MolOR model on the HORDE set of receptor sequences, refer to `scripts/generate_OR_predictions_pseudogenes.py`.
+
+Files of note:
+-  `classification_ESM.py`: code for training odorant-receptor models, using fused per-residue ESM embeddings. Requires ESM embeddings pre-computed on disk.
+- `classification_OR_feat_ESM.py`: code for training odorant-percept models, using predicted activations from MolOR. Requires OR activation logits pre-computed on disk, or will run inference first to generate for given dataset.
 
 ## Contributing
 
