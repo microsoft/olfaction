@@ -126,7 +126,7 @@ class M2OR(MoleculeCSVDataset):
         #download(_get_dgl_url(self._url), path=data_path, overwrite=False)
         df = pd.read_csv(data_path)
 
-        if preprocess != 'mol_OR_pairs':
+        if preprocess != 'mol_OR_pairs' and preprocess != 'two_class':
             self.id = df['InChi Key']
             df = df.drop(columns=['InChi Key'])
         else:

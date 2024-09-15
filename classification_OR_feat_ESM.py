@@ -136,11 +136,12 @@ def main(args, exp_config, train_set, val_set, test_set):
         seq_emb_arr = np.dstack(seq_embeddings)
         seq_embeddings = torch.FloatTensor(np.rollaxis(seq_emb_arr, -1))#.cuda()
         print(seq_embeddings.shape)
+        #seq_embeddings = seq_embeddings.to(args['device'])
     else:
         #$ Now that the model weights are loaded, lets revert n_tasks back to the current dataset's number of tasks (GS-LF)
-        train_OR_logits = torch.zeros(len(train_loader), exp_config['batch_size'], 0)#.cuda()
-        val_OR_logits = torch.zeros(len(val_loader), exp_config['batch_size'], 0)#.cuda()
-        test_OR_logits = torch.zeros(len(test_loader), exp_config['batch_size'], 0)#.cuda()
+        #train_OR_logits = torch.zeros(len(train_loader), exp_config['batch_size'], 0)#.cuda()
+        #val_OR_logits = torch.zeros(len(val_loader), exp_config['batch_size'], 0)#.cuda()
+        #test_OR_logits = torch.zeros(len(test_loader), exp_config['batch_size'], 0)#.cuda()
         exp_config['max_seq_len'] = 0
 
     if args['pretrain']:
@@ -256,9 +257,16 @@ def main(args, exp_config, train_set, val_set, test_set):
     
     ## Check if file exists at 'data/datasets/train_OR_logits.pt'
     ## If so, load it and skip training
+    # TODO: this needs to be refactorde to be more clean, just sample from the best models (one weighed, one unweighed)
+    # OR logits and simplify the options
+    """
     if args['prev_model_loss'] == 'unweighted_loss':
         print("Loading logits from model trained on unweighed loss")
-        if os.path.isfile('data/datasets/train_{}_ORs_logits.pt'.format(args['num_OR_logits'])):
+        if os.path.isfile('data/datasets/train_90_10_{}_ORs_logits.pt'.format(args['num_OR_logits'])): # use MolOR 90/10
+            train_OR_logits = torch.load('data/datasets/train_90_10_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+            val_OR_logits = torch.load('data/datasets/val_90_10_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+            test_OR_logits = torch.load('data/datasets/test_90_10_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+        elif os.path.isfile('data/datasets/train_{}_ORs_logits.pt'.format(args['num_OR_logits'])):
             train_OR_logits = torch.load('data/datasets/train_{}_ORs_logits.pt'.format(args['num_OR_logits']))
             val_OR_logits = torch.load('data/datasets/val_{}_ORs_logits.pt'.format(args['num_OR_logits']))
             test_OR_logits = torch.load('data/datasets/test_{}_ORs_logits.pt'.format(args['num_OR_logits']))
@@ -277,12 +285,17 @@ def main(args, exp_config, train_set, val_set, test_set):
     # check if path in 'data/datasets/ contains file with 'weighted' in name
     else: # use logits from model trained with weighed loss
         print("Loading logits from model trained on weighed loss")
+        if os.path.isfile('data/datasets/train_90_10_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits'])): # use MolOR 90/10
+            print("MolOR 90/10 weighted logits loading")
+            train_OR_logits = torch.load('data/datasets/train_90_10_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+            val_OR_logits = torch.load('data/datasets/val_90_10_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+            test_OR_logits = torch.load('data/datasets/test_90_10_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
         # args['prev_model_loss'] == 'weighted_loss'
-        if os.path.isfile('data/datasets/train_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits'])):
+        elif os.path.isfile('data/datasets/train_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits'])):
             train_OR_logits = torch.load('data/datasets/train_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
             val_OR_logits = torch.load('data/datasets/val_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
             test_OR_logits = torch.load('data/datasets/test_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
-        elif args['num_OR_logits'] < 400:
+        elif args['num_OR_logits'] < 1237:
             if os.path.isfile('data/datasets/train_weighted_400_ORs_logits.pt'):
                 train_OR_logits = torch.load('data/datasets/train_weighted_400_ORs_logits.pt')
                 val_OR_logits = torch.load('data/datasets/val_weighted_400_ORs_logits.pt')
@@ -298,9 +311,10 @@ def main(args, exp_config, train_set, val_set, test_set):
                 train_OR_logits = train_OR_logits[:, :, :args['num_OR_logits']]
                 val_OR_logits = val_OR_logits[:, :, :args['num_OR_logits']]
                 test_OR_logits = test_OR_logits[:, :, :args['num_OR_logits']]
-        
+    """
     # generate OR logits if none on disk
     if train_OR_logits is None:
+        args['model'] = "MolOR"
         print('Generating OR logits')
         #$ Now that the model weights are loaded, lets revert n_tasks back to the current dataset's number of tasks (GS-LF)
         train_OR_logits = torch.zeros(len(train_loader), exp_config['batch_size'], seq_embeddings.shape[0])#.cuda()
@@ -327,7 +341,7 @@ def main(args, exp_config, train_set, val_set, test_set):
                     ## Get i-th sequence embedding
                     seq_embed = seq_embeddings[i]
                     #print('seq embed shape out of dataloader')
-                    #print(seq_embed.shape)
+                    # print what device seq_embed is on
                     seq_mask = seq_masks[i]
                     # Copy len(smiles) times into tensor of shape (len(smiles), seq_embed.shape)
                     seq_embed = seq_embed.repeat(len(smiles), 1, 1)
@@ -391,15 +405,15 @@ def main(args, exp_config, train_set, val_set, test_set):
                     #print(predict_OR_feat(args, aux_model, bg, seq_embed, seq_mask, node_masks).shape)
                     test_OR_logits[batch_id, :len(smiles), i] = predict_OR_feat(args, OR_model, bg, seq_embed, seq_mask, node_masks).squeeze(dim=1)
             if args['prev_model_loss'] == 'weighted_loss':
-                print('Saving OR logits for model trained on weighed loss')
-                torch.save(train_OR_logits, 'data/datasets/train_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
-                torch.save(val_OR_logits, 'data/datasets/val_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
-                torch.save(test_OR_logits, 'data/datasets/test_weighted_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+                print('Saving OR logits for model trained on weighted loss')
+                torch.save(train_OR_logits, 'data/datasets/train_90_10_weighted_{}_ORs_logits_seed_{}.pt'.format(args['num_OR_logits'], args['seed']))
+                torch.save(val_OR_logits, 'data/datasets/val_90_10_weighted_{}_ORs_logits_seed_{}.pt'.format(args['num_OR_logits'], args['seed']))
+                torch.save(test_OR_logits, 'data/datasets/test_90_10_weighted_{}_ORs_logits_seed_{}.pt'.format(args['num_OR_logits'], args['seed']))
             else:
-                print('Saving OR logits for model trained on unweighed loss')
-                torch.save(train_OR_logits, 'data/datasets/train_{}_ORs_logits.pt'.format(args['num_OR_logits']))
-                torch.save(val_OR_logits, 'data/datasets/val_{}_ORs_logits.pt'.format(args['num_OR_logits']))
-                torch.save(test_OR_logits, 'data/datasets/test_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+                print('Saving OR logits for 90-10 model trained on unweighed loss')
+                torch.save(train_OR_logits, 'data/datasets/train_90_10_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+                torch.save(val_OR_logits, 'data/datasets/val_90_10_{}_ORs_logits.pt'.format(args['num_OR_logits']))
+                torch.save(test_OR_logits, 'data/datasets/test_90_10_{}_ORs_logits.pt'.format(args['num_OR_logits']))
 
     print(train_OR_logits.shape)
     print(val_OR_logits.shape)
@@ -416,6 +430,7 @@ def main(args, exp_config, train_set, val_set, test_set):
         
     exp_config.update({'n_tasks': args['n_tasks']})
     exp_config.update({'model': 'GCN_OR'})
+    args['model'] = 'GCN_OR'
     
     for epoch in range(args['num_epochs']):
         # Train
@@ -520,8 +535,8 @@ if __name__ == '__main__':
     else:
         args['device'] = torch.device('cpu')
     
-    seeds = [42, 63, 7, 24, 32]
-    
+    #seeds = [42, 63, 7, 24, 32]
+    seeds = [7, 24, 32]
     for seed in seeds:
         args['seed'] = seed
         print('SEED NO: ' + str(seed))
