@@ -16,32 +16,11 @@ def run_a_train_epoch(args, epoch, model, OR_logits, data_loader, loss_criterion
     train_meter = Meter()
     for batch_id, batch_data in enumerate(data_loader):
         idxs, smiles, bg, labels, masks, ids, node_masks = batch_data
-        #print('seq embed shape')
-        #print(seq_embeddings.shape)
-        #seq_masks = seq_masks.cuda()
-        #node_masks = node_masks.cuda()
-
         if len(smiles) == 1:
             # Avoid potential issues with batch normalization
             continue
 
         labels, masks = labels.to(args['device']), masks.to(args['device'])
-        ## Is it faster to iterate through each mol and generate logits for all 100 sequences by copying
-        ## over graph features vs what we do now? Unlikely since torch.repeat is faster.
-        #OR_logits = torch.zeros((len(smiles), seq_embeddings.shape[0])).cuda()
-        #for i in range(seq_embeddings.shape[0]):
-        #    ## Get i-th sequence embedding
-        #    seq_embed = seq_embeddings[i]
-        #    #print('seq embed shape out of dataloader')
-            #print(seq_embed.shape)
-        #   seq_mask = seq_masks[i]
-        #    # Copy len(smiles) times into tensor of shape (len(smiles), seq_embed.shape)
-        #    seq_embed = seq_embed.repeat(len(smiles), 1, 1)
-        #    seq_mask = seq_mask.repeat(len(smiles), 1)
-        #    #print(predict_OR_feat(args, aux_model, bg, seq_embed, seq_mask, node_masks).shape)
-        #    OR_logits[:, i] = predict_OR_feat(args, aux_model, bg, seq_embed, seq_mask, node_masks).squeeze(dim=1)
-        #print(OR_logits.shape) ## Should be (batch_size, 100)
-        #print(OR_logits[batch_id, :len(smiles), :].shape)
         logits = predict_OR_feat(args, model, bg, OR_logits[idxs, :])
         #logits = predict(args, model, bg)
         # Mask non-existing labels
@@ -50,8 +29,6 @@ def run_a_train_epoch(args, epoch, model, OR_logits, data_loader, loss_criterion
         loss.backward()
         optimizer.step()
         train_meter.update(logits, labels, masks)
-        #print (logits[0])
-        #print(labels.shape)
         if batch_id % args['print_every'] == 0:
             print('epoch {:d}/{:d}, batch {:d}/{:d}, loss {:.4f}'.format(
                 epoch + 1, args['num_epochs'], batch_id + 1, len(data_loader), loss.item()))
@@ -66,23 +43,7 @@ def run_an_eval_epoch(args, model, OR_logits, data_loader, metric = None):
         for batch_id, batch_data in enumerate(data_loader):
             idxs, smiles, bg, labels, masks, ids, node_masks = batch_data
             labels = labels.to(args['device'])
-            #OR_logits = torch.zeros((len(smiles), 100)).cuda()
-            #seq_masks = seq_masks.cuda()
-            #node_masks = node_masks.cuda()
-            #for i in range(seq_embeddings.shape[0]):
-            #    ## Get i-th sequence embedding
-            #    seq_embed = seq_embeddings[i]
-            #    seq_mask = seq_masks[i]
-                # Copy len(smiles) times into tensor of shape (len(smiles), seq_embed.shape)
-            #    seq_embed = seq_embed.repeat(len(smiles), 1, 1)
-            #    seq_mask = seq_mask.repeat(len(smiles), 1)
-            #    OR_logits[:, i] = predict_OR_feat(args, aux_model, bg, seq_embed, seq_mask, node_masks).squeeze(dim=1)
-            #print(OR_logits.shape) ## Should be (batch_size, 100)
-            #print(OR_logits.shape)
-            #print(OR_logits[batch_id, :len(smiles), :].shape)
             logits = predict_OR_feat(args, model, bg, OR_logits[idxs, :])
-            #logits = predict_OR_feat(args, model, bg, OR_logits)
-            #logits = predict(args, model, bg)
             eval_meter.update(logits, labels, masks)
     return np.mean(eval_meter.compute_metric(args['metric'] if metric is None else metric))
 
@@ -322,9 +283,6 @@ def main(args, exp_config, dataset, train_set, val_set, test_set):
                     # Copy len(smiles) times into tensor of shape (len(smiles), seq_embed.shape)
                     seq_embed = seq_embed.repeat(len(smiles), 1, 1)
                     seq_mask = seq_mask.repeat(len(smiles), 1)
-                    #print(predict_OR_feat(args, aux_model, bg, seq_embed, seq_mask, node_masks).shape)
-                    #print('dimension of logits tensor index')
-                    #print(train_OR_logits[batch_id, :, i].shape)
                     full_OR_logits[idxs, i] = predict_OR_feat(args, OR_model, bg, seq_embed, seq_mask, node_masks).squeeze(dim=1)
                 #print(train_OR_logits)
             print('done GS_LF OR logit predictions')
