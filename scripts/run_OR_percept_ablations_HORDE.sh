@@ -37,7 +37,7 @@ for n_ORs in "${n_ORs_values[@]}"; do
     echo "Running with n_ORs=${n_ORs}, rp=${rp}, cuda_device=${cuda_device}"
 
     # Run the Python script with the specified arguments
-    CUDA_VISIBLE_DEVICES=$cuda_device python classification_OR_feat_ESM_fix.py \
+    CUDA_VISIBLE_DEVICES=$cuda_device python classification_OR_feat_ESM.py \
         --model $model \
         -d $dataset \
         -f $features \

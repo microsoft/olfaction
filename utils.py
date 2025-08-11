@@ -44,7 +44,7 @@ def init_featurizer(args):
             "Expect featurizer_type to be in ['canonical', 'attentivefp'], "
             "got {}".format(args['featurizer_type']))
 
-    if args['model'] in ['Weave', 'MPNN', 'AttentiveFP']:
+    if args['model'] in ['Weave', 'MPNN', 'MolOR_MPNN', 'AttentiveFP']:
         if args['featurizer_type'] == 'canonical':
             from dgllife.utils import CanonicalBondFeaturizer
             args['edge_featurizer'] = CanonicalBondFeaturizer(self_loop=True)
@@ -267,6 +267,7 @@ def load_model(exp_configure):
             n_tasks=exp_configure['n_tasks'])
     elif exp_configure['model'] == 'MolOR': ## cross attention model for OR prediction
         from gcn_or_predictor import MolORPredictor
+        # TODO: conditional for model encoder to be GCN or MPNN, pass in relevant feature_dim args for each.
         model = MolORPredictor(
             in_feats=exp_configure['in_node_feats'],
             hidden_feats=[exp_configure['gnn_hidden_feats']] * exp_configure['num_gnn_layers'],
@@ -283,6 +284,26 @@ def load_model(exp_configure):
             predictor_hidden_feats=exp_configure['predictor_hidden_feats'],
             predictor_dropout=exp_configure['dropout'],
             n_tasks=exp_configure['n_tasks'])
+    elif exp_configure['model'] == 'MolOR_MPNN':
+        from gcn_or_predictor import MolORPredictor
+        # NOTE: conditional for model encoder to be GCN or MPNN, 
+        # pass in relevant feature_dim args for each.
+        model = MolORPredictor(
+            in_feats=exp_configure['in_node_feats'],
+            node_out_feats=exp_configure['node_out_feats'],
+            edge_in_feats=exp_configure['in_edge_feats'],
+            edge_hidden_feats=exp_configure['edge_hidden_feats'],
+            num_step_message_passing=exp_configure['num_step_message_passing'],
+            model_encoder="MPNN",
+            add_feats=exp_configure['add_feat_size'],
+            prot_feats=exp_configure['add_feat_size'],
+            gnn_attended_feats=exp_configure['gnn_attended_feats'], # set to same as protein emb (1280) to do predictions on mean-aggr attended embeddings.
+            mol2_prot=exp_configure['mol2prot_dim'],
+            max_seq_len=exp_configure['max_seq_len'],
+            max_node_len=exp_configure['max_node_len'],
+            predictor_hidden_feats=exp_configure['predictor_hidden_feats'],
+            predictor_dropout=exp_configure['dropout'],
+            n_tasks=exp_configure['n_tasks'])    
     elif exp_configure['model'] == 'MolOR_Joint':
         from gcn_or_predictor import Mol_JointPredictor
         model = Mol_JointPredictor(
@@ -430,6 +451,20 @@ def predict_OR_feat(args, model, bg, add_feat = None, seq_mask = None, node_mask
         ]
         return model(bg, node_feats, edge_feats)
     else:
+        ## NOTE (04/08/25): added support for percept model using MolOR_MPNN OR predictor
         node_feats = bg.ndata.pop('h').to(args['device'])
         edge_feats = bg.edata.pop('e').to(args['device'])
+
+        # MolOR_MPNN uses edge_feats
+        if add_feat is not None:
+            #print(node_feats) - good here
+            if seq_mask is None and node_mask is None: ## OR logits or ESM fixed-vector emb
+                add_feat = add_feat.to(args['device']) ## move directly to device here
+                return model(bg, node_feats, add_feat, edge_feats=edge_feats)
+            else: ## cross-attention forward pass
+                if "MolOR" in args['model']:
+                    return model(bg, node_feats, add_feat, seq_mask, node_mask, args['device'], edge_feats=edge_feats)
+                else:
+                    return model(bg, node_feats, add_feat, seq_mask, node_mask, edge_feats=edge_feats)
+
         return model(bg, node_feats, edge_feats)

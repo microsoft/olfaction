@@ -155,7 +155,8 @@ def main(args, exp_config, train_set, val_set, test_set):
                                 metric=args['metric'])
     else:
         #OR_checkpoint = torch.load(args['prev_model_path'] + '/model.pth', map_location=args['device'])
-
+        ## NOTE: added an argument in exp_config for the model encoder to be GCN or MPNN, pass in relevant feature_dim args for each.
+        ## test by training.
         model = load_model(exp_config).to(args['device'])
         loss_criterion = nn.BCEWithLogitsLoss(reduction='none')
         optimizer = Adam(model.parameters(), lr=exp_config['lr'],
@@ -211,8 +212,9 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--dataset', choices=['M2OR', 'GS_LF', 'M2OR_Pairs'], default='M2OR',
                         help='Dataset to use (only M2OR and GS_LF are supported)')
     
-    
-    parser.add_argument('-mo', '--model', choices=['GCN', 'GAT', 'GCN_OR', 'MolOR', 'Weave', 'MPNN', 'AttentiveFP',
+    parser.add_argument('-mo', '--model', choices=['GCN', 'GAT', 'GCN_OR', 'MolOR', 'MolOR_MPNN', 
+                                                   'Weave', 'MPNN', 
+                                                   'AttentiveFP',
                                                    'gin_supervised_contextpred',
                                                    'gin_supervised_infomax',
                                                    'gin_supervised_edgepred',
@@ -271,22 +273,14 @@ if __name__ == '__main__':
     device_id = args['device']
     cuda_device = "cuda:" + device_id
     if torch.cuda.is_available():
-        ## set cuda device
         device = torch.device(cuda_device)
         print(f"Using GPU: {device_id}")
-        #print('Using GPU: {}'.format(args['device']))
         args['device'] = device
-        #device = torch.device('cuda:{}'.format(args['device']))
-        #torch.cuda.set_device(device)
-        #print('Using GPU: {}'.format(args['device']))
-        #args['device'] = device
-        seed = args['seed']
     else:
         device = torch.device('cpu')
         torch.cuda.set_device(device)
         args['device'] = device
-
-        seed = args['seed']
+    seed = args['seed']
     print('SEED NO: ' + str(seed))
     torch.manual_seed(seed)
     np.random.seed(seed)
