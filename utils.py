@@ -101,6 +101,66 @@ def split_dataset(args, dataset):
     elif args['split'] == 'random':
         train_set, val_set, test_set = RandomSplitter.train_val_test_split(
             dataset, frac_train=train_ratio, frac_val=val_ratio, frac_test=test_ratio, random_state = 42)
+    elif args['split'] == 'or_subfamily_holdout':
+        print(f'Using OR subfamily holdout with subfamily: {args["or_subfamily_holdout"]}')
+        from dgl.data.utils import Subset
+        import pandas as pd
+        import numpy as np
+        
+        # Validate input
+        target_subfamily = args['or_subfamily_holdout']
+        if target_subfamily is None:
+            raise ValueError("--or_subfamily_holdout must be specified when using 'or_subfamily_holdout' split")
+        
+        # Load the annotated sequences file to get OR subfamily information
+        annotations_path = os.path.join(os.path.dirname(__file__), 'data/datasets/M2OR/seqs_with_annotations.csv')
+        if not os.path.exists(annotations_path):
+            raise FileNotFoundError(f"Annotated sequences file not found: {annotations_path}")
+        
+        annotations_df = pd.read_csv(annotations_path, sep=';')
+        
+        # Find sequences belonging to the target subfamily (e.g., OR2J matches OR2J1, OR2J2, OR2J3)
+        subfamily_mask = annotations_df['gene_id'].str.startswith(target_subfamily, na=False)
+        subfamily_seq_ids = set(annotations_df[subfamily_mask]['seq_id'].tolist())
+        
+        print(f"Found {len(subfamily_seq_ids)} sequences in subfamily {target_subfamily}")
+        
+        # Map seq_ids to dataset indices using dataset.seq_id
+        if not hasattr(dataset, 'seq_id'):
+            raise AttributeError("Dataset must have 'seq_id' attribute for OR subfamily holdout")
+        
+        # Find indices of subfamily sequences in the dataset
+        test_indices = [i for i, seq_id in enumerate(dataset.seq_id) if seq_id in subfamily_seq_ids]
+        
+        if len(test_indices) == 0:
+            raise ValueError(f"No sequences found for subfamily {target_subfamily} in the dataset")
+        
+        print(f"Found {len(test_indices)} subfamily sequences in dataset out of {len(dataset)}")
+        
+        # Get remaining indices (not in test set)
+        all_indices = set(range(len(dataset)))
+        remaining_indices = list(all_indices - set(test_indices))
+        
+        # Randomly split remaining data into train and validation
+        np.random.seed(42)  # For reproducibility
+        np.random.shuffle(remaining_indices)
+        
+        # Parse train/val ratios (normalize since test is fixed by subfamily)
+        train_ratio, val_ratio, _ = map(float, args['split_ratio'].split(','))
+        normalized_train_ratio = train_ratio / (train_ratio + val_ratio)
+        
+        n_remaining = len(remaining_indices)
+        n_train = int(n_remaining * normalized_train_ratio)
+        
+        train_indices = remaining_indices[:n_train]
+        val_indices = remaining_indices[n_train:]
+        
+        print(f"Split summary:")
+        print(f"  Train: {len(train_indices)} sequences")
+        print(f"  Val: {len(val_indices)} sequences") 
+        print(f"  Test (subfamily {target_subfamily}): {len(test_indices)} sequences")
+        
+        train_set, val_set, test_set = Subset(dataset, train_indices), Subset(dataset, val_indices), Subset(dataset, test_indices)
     elif args['split'] == 'iterative_stratification':
         print('Using iterative stratification')
         from skmultilearn.model_selection import IterativeStratification
