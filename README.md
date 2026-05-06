@@ -1,13 +1,41 @@
 # Mapping the combinatorial coding between olfactory receptors and perception with deep learning
 
-This repository contains the source code, plotting notebooks, and training data for the paper '[Mapping the combinatorial coding between olfactory receptors and perception with deep learning](https://www.biorxiv.org/content/10.1101/2024.09.16.613334v1)'. This repository is actively in development, and we will add more instructions on training your own olfactory models on custom datasets, running inference, and generating activation maps for novel odorants.
+This repository contains the source code, plotting notebooks, and training data for the paper '[Mapping the combinatorial coding between olfactory receptors and perception with deep learning](https://www.biorxiv.org/content/10.1101/2024.09.16.613334v1)' (v2 in preparation).
 
-We will add a Zenodo link shortly after preprint, containing model weights for the odorant-receptor and odorant-percept models. We will also include the OR logits for both the HORDE and M2OR receptor datasets, to run percept prediction with the OR activations as supplementary features. We are also working to add a custom dataloader for running inference with both models shortly, so users can score larger datasets of molecules for potential receptor and percept codes. For an example of doing so with the MolOR model on the HORDE set of receptor sequences, refer to `scripts/generate_OR_predictions_pseudogenes.py`.
+A Zenodo release containing model weights, pre-computed ESM embeddings, and OR activation logits (for both HORDE and M2OR receptor sets) will accompany the v2 release. See `data/datasets/` for the small CSV/FASTA artifacts checked into the repo; large `.pt`/`.pth` artifacts are kept out of git via `.gitignore` and should be downloaded from Zenodo and placed in `data/datasets/`.
 
-Files of note:
--  `classification_ESM.py`: code for training odorant-receptor models, using fused per-residue ESM embeddings. Requires ESM embeddings pre-computed on disk.
-- `classification_OR_feat_ESM.py`: code for training odorant-percept models, using predicted activations from MolOR. Requires OR activation logits pre-computed on disk, or will run inference first to generate for given dataset.
-- `scripts/run_OR_percept_ablations_HORDE.sh`: script to reproduce main ablation in paper, scaling # of OR activations from HORDE dataset for odorant percept prediction (after downloading data from zenodo and dummping in `data/datasets`, simply run `bash run_OR_percept_ablations_HORDE.sh`).
+For an example of running inference with the MolOR model over the HORDE set of receptor sequences (including pseudogene controls), refer to `scripts/generate_OR_predictions_pseudogenes.py`.
+
+## Environment
+
+```bash
+conda env create -f olfaction.yml
+conda activate olfaction
+```
+
+## Files of note
+
+### Training entry points
+- `classification_ESM.py`: trains odorant-receptor models (MolOR) with fused per-residue ESM embeddings and bidirectional cross-attention. The `--model_encoder` flag selects between GCN and MPNN molecular encoders; configs live under `data/configures/M2OR_Pairs/` (e.g. `MolOR_canonical.json`, `MolOR_MPNN_canonical.json`). Requires ESM embeddings pre-computed on disk; first run will cache them.
+- `classification_OR_feat_ESM.py`: trains odorant-percept models using predicted MolOR activations as input features (alongside the molecular GCN). Requires OR activation logits pre-computed on disk, or will run inference first to generate them for the given dataset.
+- `classification.py`: basic GCN/MPNN classification baselines without ESM features.
+
+### Ablation and reproduction scripts (under `scripts/`)
+- `run_OR_percept_ablations_HORDE.sh`: main paper ablation — scales # of HORDE OR activations as input features for odorant-percept prediction. After downloading data from Zenodo into `data/datasets/`, run `bash scripts/run_OR_percept_ablations_HORDE.sh`.
+- `run_OR_percept_ablations.sh`: equivalent ablation against the M2OR receptor set (1237 ORs).
+- `run_OR_percept_ablations_all_DBs.sh`: ablation over the union of HORDE and M2OR ORs.
+- `generate_OR_predictions_pseudogenes.py`: generates MolOR activation logits for HORDE receptors (functional and pseudogene splits).
+- `prepare_enzpred_data.py`: produces the M2OR train/val/test splits used for the Goldman et al. (FFN+ESM) and PerceiverCPI baselines.
+- `blast_uniprot.py`, `get_gene_uniprot_IDs_blast.py`, `merge_blast_annotations.py`, `m2or_ed_distance_matrix.py`, `get_HORDE_metadata.ipynb`: receptor annotation and pre-processing utilities.
+
+### Analysis notebooks (under `notebooks/`)
+- `fig2_plots.ipynb`, `figures_OR_percept.ipynb`, `percept_OR_plots.ipynb`: main-text figures.
+- `fig4_stat_tests.ipynb`: statistical analyses including Benjamini–Hochberg-corrected ablation comparisons and the Jonckheere–Terpstra trend test reported in Table S1.
+- `nutty_receptor_analysis.ipynb`, `filtered_nutty_receptor_analysis.ipynb`, `OR_subfamily_analysis.ipynb`, `cross_task_stats.ipynb`, `percept_receptor_null_distribution.ipynb`: per-percept and per-receptor analyses.
+- `test_OR_logits_shuffle.ipynb`: shuffled-OR-logits control referenced in the revisions.
+
+### Receptor binding pre-processing (under `receptor_binding/`)
+Notebooks and utilities for preparing the M2OR pairwise dataset and computing receptor-level statistics (sequence-similarity matrix, BLAST-based annotations).
 
 ## Contributing
 

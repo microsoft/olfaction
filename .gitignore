@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Top-level cached weights / embeddings / DGL graph caches
+/*.pth
+/*.pt
+/*.bin
+
+# Large data artifacts (intermediate splits, ESM caches, DGL caches)
+# Canonical released artifacts should be force-added with `git add -f`.
+data/datasets/*.pth
+data/datasets/*_dglgraph.bin
+data/datasets/test_*.pt
+data/datasets/train_*.pt
+data/datasets/val_*.pt
+data/datasets/full_*.pt
+data/datasets/seed_*.pt
+data/datasets/FIXED_*.pt
+data/datasets/olfactory_subgenome_OR_logits.pt
+data/datasets/weighted_loss_olfactory_subgenome_OR_logits.pt
+data/null_distributions.pkl
+
+# Training output directories (model checkpoints, logs, eval results)
+FIXED_shuffle_*/
+gs_lf_*/
+GS_LF/
+/GS_LF
+m2or_*/
+MolOR_MPNN_*/
+baselines_*/
+weighted_loss_*/
+unweighted_loss_*/
+classification_results/
+gcn_gs_lf_baseline/
+blank_olfactory_subgenome*/
+seed_*_gs_lf_*/
+test_FIXED_*/
+molecule-percept/
+molecule_percept/
+
+# Plot/figure outputs (regenerable from notebooks)
+plots/
+
+# Deprecated code kept locally
+deprecated/
+
+# Project-local helper files (not for collaborators)
+CLAUDE.md
+notebooks/fig4_stat_tests.ipynb
