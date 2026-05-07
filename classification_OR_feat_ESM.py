@@ -3,6 +3,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import json
 
 from dgllife.model import load_pretrained
 from dgllife.utils import EarlyStopping, Meter, SMILESToBigraph
@@ -105,6 +106,26 @@ def main(args, exp_config, dataset, train_set, val_set, test_set):
         top_seqs = mol_OR['Conceptual Sequence'].value_counts()[0:args['num_OR_logits']].keys().tolist()
         max_seq_len = len(max(top_seqs, key=len))
         exp_config['max_seq_len'] = max_seq_len
+
+        # If flagged, load precomputed HORDE indices and constrain to first N
+        if args.get('OR_gene_class', 'all') in ['pseudogene', 'functional']:
+            idx_path = 'data/datasets/HORDE/pseudogene_indices.json' if args['OR_gene_class'] == 'pseudogene' \
+                       else 'data/datasets/HORDE/functional_indices.json'
+            try:
+                with open(idx_path, 'r') as f:
+                    all_indices = json.load(f)
+                # Select first N indices within the chosen class (filtering happens BEFORE limiting to N)
+                N = args['num_OR_logits']
+                selected = all_indices[:N]
+                if len(selected) == 0:
+                    raise ValueError('Selected OR class produced zero sequences'' activations.')
+                args['selected_OR_indices'] = selected
+                # Override add_feat_size to match the reduced number of activations
+                exp_config['add_feat_size'] = len(selected)
+                print(f"HORDE {args['OR_gene_class']} indices loaded: {len(selected)}/{N}")
+            except Exception as e:
+                print(f"Failed to load HORDE indices from {idx_path}: {e}")
+                args['selected_OR_indices'] = None
     elif args['num_OR_logits'] > 0 and args['OR_database'] == 'all':
         import pandas as pd
         mol_OR = pd.read_csv('data/datasets/genes.csv', sep = '\t')
@@ -235,13 +256,18 @@ def main(args, exp_config, dataset, train_set, val_set, test_set):
         if args['prev_model_loss'] == 'unweighted_loss':
             print("Loading logits from model trained on unweighed loss")
             full_OR_logits = torch.load('/home/seyonec/olfaction/data/datasets/olfactory_subgenome_OR_logits.pt')
-            if args['num_OR_logits'] < 1237:
-                full_OR_logits = full_OR_logits[:, :args['num_OR_logits']]
         else:
             print("Loading logits from model trained on weighed loss")
             full_OR_logits = torch.load('/home/seyonec/olfaction/data/datasets/weighted_loss_olfactory_subgenome_OR_logits.pt')
-            if args['num_OR_logits'] < 1237:
-                full_OR_logits = full_OR_logits[:, :args['num_OR_logits']]
+        # Apply class selection first (if provided), then enforce num_OR_logits
+        selected = args.get('selected_OR_indices', None)
+        if selected is not None:
+            full_OR_logits = full_OR_logits[:, selected]
+        # Finally, enforce num_OR_logits as a cap on columns
+        if full_OR_logits.shape[1] > args['num_OR_logits']:
+            full_OR_logits = full_OR_logits[:, :args['num_OR_logits']]
+
+        print(f"Loaded {args['OR_gene_class']} OR logits with shape: ", full_OR_logits.shape)
     else:
         print("No valid OR database specified")
     
@@ -403,6 +429,8 @@ if __name__ == '__main__':
                              'will be performed. (default: 1000)')
     parser.add_argument('-OR_db', '--OR_database', type=str, default='M2OR',
                         help='Database to use for ORs activations (default: M2OR, also support for HORDE or both)')
+    parser.add_argument('-or_class', '--OR_gene_class', choices=['all', 'pseudogene', 'functional'], default='all',
+                        help='For HORDE, choose to include all, only pseudogenes, or only functional receptors for logits.')
     parser.add_argument('-nw', '--num-workers', type=int, default=0,
                         help='Number of processes for data loading (default: 0)')
     parser.add_argument('-pe', '--print-every', type=int, default=20,

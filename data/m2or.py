@@ -257,6 +257,7 @@ class M2OR_Pairs(MoleculeCSVDataset):
                  load=False,
                  weighted_samples = False,
                  cross_attention = False,
+                 normalize_loss_by_class_imbalance = False,
                  esm_model = '650m',
                  esm_random_weights = False,
                  load_full = False,
@@ -269,7 +270,7 @@ class M2OR_Pairs(MoleculeCSVDataset):
         else:
             data_path = 'data/datasets/M2OR_original_mol_OR_pairs.csv'
             ## JOIN data_path with ROOT_DIR
-            data_path = ROOT_DIR + '/' + data_path
+            data_path = os.path.join(ROOT_DIR, data_path)
         df = pd.read_csv(data_path, sep=';')
 
         self.id =  df['mol_id'].astype(str) + '-' + df['seq_id'].astype(str)
@@ -306,14 +307,16 @@ class M2OR_Pairs(MoleculeCSVDataset):
                 torch.save(seq_embeddings, path)        ## define dictionary where keys are from sequences_dict, and values are from self.seq_embeddings
         self.seq_embeddings_dict = dict(zip(self.sequences_dict.keys(), seq_embeddings))
         if weighted_samples:
-            self.sample_weights = torch.tensor(df['sample_weight'].astype(float))
-            df = df.drop(columns={'weight_pair_imbalance', 'weight_class', 'weight_quality', 'sample_weight'})
+            df = get_weight_cols(df, normalize_loss_by_class_imbalance)
+            self.sample_weights = torch.tensor(df['sample_weight'].to_numpy(dtype=float))
         else:
-            import numpy as np
-            self.sample_weights = torch.tensor(pd.Series(1.0, index=np.arange(len(df)), name='orders'))
+            self.sample_weights = torch.tensor(np.ones(len(df), dtype=float))
         
         df['smiles'] = df['canonicalSMILES']
         df = df.drop(columns={'mol_id', 'seq_id', '_DataQuality', 'num_unique_value_screen', 'mutated_Sequence'})
+        if weighted_samples:
+            df = df.drop(columns={'weight_pair_imbalance', 'weight_class', 'weight_quality', 'sample_weight'})
+
         df = df[['smiles', 'Responsive']]
 
         self.load_full = load_full
@@ -506,46 +509,39 @@ def esm_embed_2(sequences, device=torch.device('cuda:0' if torch.cuda.is_availab
 
 
 
-def get_weight_cols(df):
-    ## Presumes df haS columns mol_id, seq_id, Responsiveness, and _dataQuality. 
+def get_weight_cols(df, normalize_loss_by_class_imbalance=False):
+    ## Presumes df has columns mol_id, seq_id, Responsiveness, and _dataQuality.
     ## For data quality weights:
     ## Using Mainland et. al (2015) data for primary, secondary, and tertiary screening, with the conditional probabilities for each
     ## positive or negative primary/secondary screen being truly positive or negative in the tertiary screen to reweigh loss
-    
-    pos_weight = df['Responsive'].value_counts()[0] / df['Responsive'].value_counts()[1]
     import numpy as np
+
+    conditions = [
+        df['_DataQuality'] == 'ec50',
+        (df['_DataQuality'] == 'primaryScreening') & (df['Responsive'] == 1),
+        (df['_DataQuality'] == 'primaryScreening') & (df['Responsive'] == 0),
+        (df['_DataQuality'] == 'secondaryScreening') & (df['Responsive'] == 1),
+        (df['_DataQuality'] == 'secondaryScreening') & (df['Responsive'] == 0)
+    ]
+    values = [1.0, 0.4, 0.69, 0.72, 0.77]
+    df['weight_quality'] = np.select(conditions, values, default=1.0)
+
+    responsive_counts = df['Responsive'].value_counts()
+    pos_weight = responsive_counts.get(0, 0) / responsive_counts.get(1, 1) if responsive_counts.get(1, 0) > 0 else 1.0
+    df['weight_class'] = np.where(df['Responsive'] == 1, pos_weight, 1.0)
+
     k = 50
+    num_mols = df.groupby('seq_id')['seq_id'].transform('count')
+    num_receptors = df.groupby('mol_id')['mol_id'].transform('count')
+    df['weight_pair_imbalance'] = np.log(1 + k/2 * (1/num_mols + 1/num_receptors))
 
-    for i in range(len(df)):
-        if df.loc [i, '_DataQuality'] == 'ec50':
-            df.loc[i, 'weight_quality'] = 1
-        elif df.loc[i, '_DataQuality'] == 'primaryScreening':
-            if df.loc[i, 'Responsive'] == 1:
-                df.loc[i, 'weight_quality'] = 0.4
-            else:
-                df.loc[i, 'weight_quality'] = 0.69
-        elif df.loc[i, '_DataQuality'] == 'secondaryScreening':
-            if df.loc[i, 'Responsive'] == 1:
-                df.loc[i, 'weight_quality'] = 0.72
-            else:
-                df.loc[i, 'weight_quality'] = 0.77
+    if normalize_loss_by_class_imbalance:
+        print('normalizing loss using log1p ofclass imbalance alongside canonical weighing scheme')
+        df['sample_weight'] = np.log1p(df['weight_class']) * df['weight_pair_imbalance'] * df['weight_quality']
+    else:
+        print('normalizing loss using cannonical weighing scheme')
+        df['sample_weight'] = df['weight_quality'] * df['weight_class'] * df['weight_pair_imbalance']
 
-        if df.loc [i, 'Responsive'] == 1:
-            df.loc[i, 'weight_class'] = pos_weight
-        else:
-            df.loc[i, 'weight_class'] = 1
-
-        curr_receptor = df.iloc[i]['seq_id']
-        curr_mol = df.iloc[i]['mol_id']
-        num_mols = df[df['seq_id'] == curr_receptor]['mol_id'].shape[0]
-        num_receptors = df[df['mol_id'] == curr_mol]['seq_id'].shape[0]
-        
-        df.loc[i, 'weight_pair_imbalance'] = np.log(1 + k/2 * (1/num_mols + 1/num_receptors))
-
-    df['weight_pair_imbalance'] = df['weight_pair_imbalance'].astype(float)
-    
-    df.loc[i, 'sample_weight'] = df.iloc[i]['weight_quality'] * df.iloc[i]['weight_class'] * df.iloc[i]['weight_pair_imbalance']
-    
     return df
 
         

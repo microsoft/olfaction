@@ -44,7 +44,7 @@ def init_featurizer(args):
             "Expect featurizer_type to be in ['canonical', 'attentivefp'], "
             "got {}".format(args['featurizer_type']))
 
-    if args['model'] in ['Weave', 'MPNN', 'AttentiveFP']:
+    if args['model'] in ['Weave', 'MPNN', 'MolOR_MPNN', 'AttentiveFP']:
         if args['featurizer_type'] == 'canonical':
             from dgllife.utils import CanonicalBondFeaturizer
             args['edge_featurizer'] = CanonicalBondFeaturizer(self_loop=True)
@@ -101,6 +101,66 @@ def split_dataset(args, dataset):
     elif args['split'] == 'random':
         train_set, val_set, test_set = RandomSplitter.train_val_test_split(
             dataset, frac_train=train_ratio, frac_val=val_ratio, frac_test=test_ratio, random_state = 42)
+    elif args['split'] == 'or_subfamily_holdout':
+        print(f'Using OR subfamily holdout with subfamily: {args["or_subfamily_holdout"]}')
+        from dgl.data.utils import Subset
+        import pandas as pd
+        import numpy as np
+        
+        # Validate input
+        target_subfamily = args['or_subfamily_holdout']
+        if target_subfamily is None:
+            raise ValueError("--or_subfamily_holdout must be specified when using 'or_subfamily_holdout' split")
+        
+        # Load the annotated sequences file to get OR subfamily information
+        annotations_path = os.path.join(os.path.dirname(__file__), 'data/datasets/M2OR/seqs_with_annotations.csv')
+        if not os.path.exists(annotations_path):
+            raise FileNotFoundError(f"Annotated sequences file not found: {annotations_path}")
+        
+        annotations_df = pd.read_csv(annotations_path, sep=';')
+        
+        # Find sequences belonging to the target subfamily (e.g., OR2J matches OR2J1, OR2J2, OR2J3)
+        subfamily_mask = annotations_df['gene_id'].str.startswith(target_subfamily, na=False)
+        subfamily_seq_ids = set(annotations_df[subfamily_mask]['seq_id'].tolist())
+        
+        print(f"Found {len(subfamily_seq_ids)} sequences in subfamily {target_subfamily}")
+        
+        # Map seq_ids to dataset indices using dataset.seq_id
+        if not hasattr(dataset, 'seq_id'):
+            raise AttributeError("Dataset must have 'seq_id' attribute for OR subfamily holdout")
+        
+        # Find indices of subfamily sequences in the dataset
+        test_indices = [i for i, seq_id in enumerate(dataset.seq_id) if seq_id in subfamily_seq_ids]
+        
+        if len(test_indices) == 0:
+            raise ValueError(f"No sequences found for subfamily {target_subfamily} in the dataset")
+        
+        print(f"Found {len(test_indices)} subfamily sequences in dataset out of {len(dataset)}")
+        
+        # Get remaining indices (not in test set)
+        all_indices = set(range(len(dataset)))
+        remaining_indices = list(all_indices - set(test_indices))
+        
+        # Randomly split remaining data into train and validation
+        np.random.seed(42)  # For reproducibility
+        np.random.shuffle(remaining_indices)
+        
+        # Parse train/val ratios (normalize since test is fixed by subfamily)
+        train_ratio, val_ratio, _ = map(float, args['split_ratio'].split(','))
+        normalized_train_ratio = train_ratio / (train_ratio + val_ratio)
+        
+        n_remaining = len(remaining_indices)
+        n_train = int(n_remaining * normalized_train_ratio)
+        
+        train_indices = remaining_indices[:n_train]
+        val_indices = remaining_indices[n_train:]
+        
+        print(f"Split summary:")
+        print(f"  Train: {len(train_indices)} sequences")
+        print(f"  Val: {len(val_indices)} sequences") 
+        print(f"  Test (subfamily {target_subfamily}): {len(test_indices)} sequences")
+        
+        train_set, val_set, test_set = Subset(dataset, train_indices), Subset(dataset, val_indices), Subset(dataset, test_indices)
     elif args['split'] == 'iterative_stratification':
         print('Using iterative stratification')
         from skmultilearn.model_selection import IterativeStratification
@@ -267,6 +327,7 @@ def load_model(exp_configure):
             n_tasks=exp_configure['n_tasks'])
     elif exp_configure['model'] == 'MolOR': ## cross attention model for OR prediction
         from gcn_or_predictor import MolORPredictor
+        # TODO: conditional for model encoder to be GCN or MPNN, pass in relevant feature_dim args for each.
         model = MolORPredictor(
             in_feats=exp_configure['in_node_feats'],
             hidden_feats=[exp_configure['gnn_hidden_feats']] * exp_configure['num_gnn_layers'],
@@ -283,6 +344,26 @@ def load_model(exp_configure):
             predictor_hidden_feats=exp_configure['predictor_hidden_feats'],
             predictor_dropout=exp_configure['dropout'],
             n_tasks=exp_configure['n_tasks'])
+    elif exp_configure['model'] == 'MolOR_MPNN':
+        from gcn_or_predictor import MolORPredictor
+        # NOTE: conditional for model encoder to be GCN or MPNN, 
+        # pass in relevant feature_dim args for each.
+        model = MolORPredictor(
+            in_feats=exp_configure['in_node_feats'],
+            node_out_feats=exp_configure['node_out_feats'],
+            edge_in_feats=exp_configure['in_edge_feats'],
+            edge_hidden_feats=exp_configure['edge_hidden_feats'],
+            num_step_message_passing=exp_configure['num_step_message_passing'],
+            model_encoder="MPNN",
+            add_feats=exp_configure['add_feat_size'],
+            prot_feats=exp_configure['add_feat_size'],
+            gnn_attended_feats=exp_configure['gnn_attended_feats'], # set to same as protein emb (1280) to do predictions on mean-aggr attended embeddings.
+            mol2_prot=exp_configure['mol2prot_dim'],
+            max_seq_len=exp_configure['max_seq_len'],
+            max_node_len=exp_configure['max_node_len'],
+            predictor_hidden_feats=exp_configure['predictor_hidden_feats'],
+            predictor_dropout=exp_configure['dropout'],
+            n_tasks=exp_configure['n_tasks'])    
     elif exp_configure['model'] == 'MolOR_Joint':
         from gcn_or_predictor import Mol_JointPredictor
         model = Mol_JointPredictor(
@@ -430,6 +511,20 @@ def predict_OR_feat(args, model, bg, add_feat = None, seq_mask = None, node_mask
         ]
         return model(bg, node_feats, edge_feats)
     else:
+        ## NOTE (04/08/25): added support for percept model using MolOR_MPNN OR predictor
         node_feats = bg.ndata.pop('h').to(args['device'])
         edge_feats = bg.edata.pop('e').to(args['device'])
+
+        # MolOR_MPNN uses edge_feats
+        if add_feat is not None:
+            #print(node_feats) - good here
+            if seq_mask is None and node_mask is None: ## OR logits or ESM fixed-vector emb
+                add_feat = add_feat.to(args['device']) ## move directly to device here
+                return model(bg, node_feats, add_feat, edge_feats=edge_feats)
+            else: ## cross-attention forward pass
+                if "MolOR" in args['model']:
+                    return model(bg, node_feats, add_feat, seq_mask, node_mask, args['device'], edge_feats=edge_feats)
+                else:
+                    return model(bg, node_feats, add_feat, seq_mask, node_mask, edge_feats=edge_feats)
+
         return model(bg, node_feats, edge_feats)

@@ -155,7 +155,8 @@ def main(args, exp_config, train_set, val_set, test_set):
                                 metric=args['metric'])
     else:
         #OR_checkpoint = torch.load(args['prev_model_path'] + '/model.pth', map_location=args['device'])
-
+        ## NOTE: added an argument in exp_config for the model encoder to be GCN or MPNN, pass in relevant feature_dim args for each.
+        ## test by training.
         model = load_model(exp_config).to(args['device'])
         loss_criterion = nn.BCEWithLogitsLoss(reduction='none')
         optimizer = Adam(model.parameters(), lr=exp_config['lr'],
@@ -211,8 +212,9 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--dataset', choices=['M2OR', 'GS_LF', 'M2OR_Pairs'], default='M2OR',
                         help='Dataset to use (only M2OR and GS_LF are supported)')
     
-    
-    parser.add_argument('-mo', '--model', choices=['GCN', 'GAT', 'GCN_OR', 'MolOR', 'Weave', 'MPNN', 'AttentiveFP',
+    parser.add_argument('-mo', '--model', choices=['GCN', 'GAT', 'GCN_OR', 'MolOR', 'MolOR_MPNN', 
+                                                   'Weave', 'MPNN', 
+                                                   'AttentiveFP',
                                                    'gin_supervised_contextpred',
                                                    'gin_supervised_infomax',
                                                    'gin_supervised_edgepred',
@@ -243,9 +245,15 @@ if __name__ == '__main__':
                         help = 'For model to generate OR logits, specify path to trained model to correctly load model.')
     parser.add_argument('-w', '--sample_weight', action='store_true', default = False,
                             help='Whether to weigh loss for sample based on OR, molecule, data quality and label')
+    ## NOTE (08/10/2025): new feature for log1p normalization of class imbalance ratio as part of weighted loss
+    parser.add_argument('-n_w', '--normalize_loss_by_class_imbalance', action='store_true', default = False,
+                            help='Whether to weigh loss for sample based on a normalized class imbalance ratio')
     ## Seeded as random_state = 42
-    parser.add_argument('-s', '--split', choices=['scaffold', 'random'], default='scaffold',
+    ## NOTE (08/17/2025): new feature for OR subfamily holdout as test set
+    parser.add_argument('-s', '--split', choices=['scaffold', 'random', 'or_subfamily_holdout'], default='scaffold',
                         help='Dataset splitting method (default: scaffold)')
+    parser.add_argument('-or_holdout', '--or_subfamily_holdout', type=str, default=None,
+                        help='OR subfamily to hold out as test set (e.g., "OR2J"). Only used with --split or_subfamily_holdout')
     parser.add_argument('-sr', '--split-ratio', default='0.8,0.1,0.1', type=str,
                         help='Proportion of the dataset to use for training, validation and test, '
                              '(default: 0.8,0.1,0.1)')
@@ -271,25 +279,22 @@ if __name__ == '__main__':
     device_id = args['device']
     cuda_device = "cuda:" + device_id
     if torch.cuda.is_available():
-        ## set cuda device
         device = torch.device(cuda_device)
         print(f"Using GPU: {device_id}")
-        #print('Using GPU: {}'.format(args['device']))
         args['device'] = device
-        #device = torch.device('cuda:{}'.format(args['device']))
-        #torch.cuda.set_device(device)
-        #print('Using GPU: {}'.format(args['device']))
-        #args['device'] = device
-        seed = args['seed']
     else:
         device = torch.device('cpu')
         torch.cuda.set_device(device)
         args['device'] = device
-
-        seed = args['seed']
+    seed = args['seed']
     print('SEED NO: ' + str(seed))
     torch.manual_seed(seed)
     np.random.seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     args = init_featurizer(args)
     mkdir_p(args['result_path'])
     smiles_to_g = SMILESToBigraph(add_self_loop=True, node_featurizer=args['node_featurizer'],
@@ -309,6 +314,7 @@ if __name__ == '__main__':
         ## TODO : REMOVE MAX NODE LEN = 100
         dataset = M2OR_Pairs(smiles_to_graph=smiles_to_g, weighted_samples=args['sample_weight'],
                             cross_attention=args['cross_attention'], load_full=True, 
+                            normalize_loss_by_class_imbalance=args['normalize_loss_by_class_imbalance'],
                             esm_random_weights=args['esm_random_weights'], esm_model=args['esm_version'],
                             n_jobs=1 if args['num_workers'] == 0 else args['num_workers'])#, max_node_len=100)            
         args['max_seq_len'] = dataset.max_seq_len

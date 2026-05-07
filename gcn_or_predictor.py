@@ -3,7 +3,7 @@ import torch.nn as nn
 
 from dgllife.model.model_zoo.mlp_predictor import MLPPredictor
 from dgllife.model.gnn.gcn import GCN
-from dgllife.model.gnn.gatv2 import GATv2
+from dgllife.model.gnn.mpnn import MPNNGNN
 from dgllife.model.readout.weighted_sum_and_max import WeightedSumAndMax
 from torch.nn.functional import scaled_dot_product_attention
 import dgl
@@ -485,6 +485,7 @@ class OdorantReceptorCrossAttention(nn.Module):
         return output_vec
     
 
+
     
 class MolORPredictor(nn.Module):
     """GCN-based model for regression and classification on graphs with cross-attention layer
@@ -548,11 +549,12 @@ class MolORPredictor(nn.Module):
         The probability for dropout in the output MLP predictor. Default to 0.
     """
     def __init__(self, in_feats, hidden_feats=None, gnn_norm=None, activation=None,
-                 add_feats = None, prot_feats = 1280, gnn_attended_feats = None, max_seq_len = 705, max_node_len = 22,
-                 mol2_prot = False,
-                 residual=None, batchnorm=None, dropout=None, classifier_hidden_feats=128,
-                 classifier_dropout=0., n_tasks=1, predictor_hidden_feats=128,
-                 predictor_dropout=0.):
+                 add_feats = None, prot_feats = 1280, gnn_attended_feats = None, max_seq_len = 705,
+                 max_node_len = 22, mol2_prot = False, model_encoder = "GCN",
+                 node_out_feats = 256, edge_in_feats = 256, edge_hidden_feats = 128,
+                 num_step_message_passing = 3, residual=None, batchnorm=None, dropout=None,
+                 classifier_hidden_feats=128, classifier_dropout=0., n_tasks=1,
+                 predictor_hidden_feats=128, predictor_dropout=0.):
         super(MolORPredictor, self).__init__()
         torch.autograd.set_detect_anomaly(True)
 
@@ -567,21 +569,31 @@ class MolORPredictor(nn.Module):
             predictor_dropout = classifier_dropout
         self.max_node_len = max_node_len
 
-        self.gnn = GCN(in_feats=in_feats,
+        self.model_encoder = model_encoder
+
+        if model_encoder == "GCN":
+            self.gnn = GCN(in_feats=in_feats,
                        hidden_feats=hidden_feats,
                        gnn_norm=gnn_norm,
                        activation=activation,
                        residual=residual,
                        batchnorm=batchnorm,
                        dropout=dropout)
-        gnn_out_feats = self.gnn.hidden_feats[-1]
-        #self.readout = WeightedSumAndMax(gnn_out_feats)
-        
-        #self.cross_attn = CrossAttention_2(prot_feats, gnn_out_feats, mol2prot = mol2_prot)
-        # NOTE: trying with torch implementation
+            gnn_out_feats = self.gnn.hidden_feats[-1]
+        elif model_encoder == "MPNN":
+            self.gnn = MPNNGNN(node_in_feats=in_feats,
+                       node_out_feats=node_out_feats,
+                       edge_in_feats=edge_in_feats,
+                       edge_hidden_feats=edge_hidden_feats,
+                       num_step_message_passing=num_step_message_passing)
+            gnn_out_feats = node_out_feats
+        else:
+            raise ValueError("Invalid model encoder, {} not supported.".format(model_encoder))
+
         self.cross_attn = OdorantReceptorCrossAttention(prot_feats, gnn_out_feats, mol2prot = mol2_prot)
 
-        gnn_attended_feats = self.gnn.hidden_feats[-1] if gnn_attended_feats is None else gnn_attended_feats # output dimension of mol may differ
+        if gnn_attended_feats is None:
+            gnn_attended_feats = self.gnn.hidden_feats[-1] if model_encoder == "GCN" else gnn_out_feats # output dimension of mol may differ
         
         self.predict = MLPPredictor(prot_feats + gnn_attended_feats, predictor_hidden_feats,
                                     n_tasks, predictor_dropout)
@@ -591,17 +603,7 @@ class MolORPredictor(nn.Module):
         self.mol_norm = nn.LayerNorm(gnn_out_feats)
         self.feat_norm = nn.LayerNorm(prot_feats + gnn_attended_feats)
         
-        #self.predict = MLPPredictor(max_seq_len + max_node_len, predictor_hidden_feats, 
-        #                            n_tasks, predictor_dropout)
-        """
-        if add_feats:
-            self.predict = MLPPredictor(2 * gnn_out_feats + add_feats, predictor_hidden_feats,
-                                    n_tasks, predictor_dropout)
-        else:
-            self.predict = MLPPredictor(2 * gnn_out_feats, predictor_hidden_feats,
-                                    n_tasks, predictor_dropout)
-        """
-    def forward(self, bg, feats, add_feats = None, seq_mask = None, node_mask = None, device = None):
+    def forward(self, bg, feats, add_feats = None, seq_mask = None, node_mask = None, device = None, edge_feats = None):
         """Graph-level regression/soft classification.
 
         Parameters
@@ -618,6 +620,8 @@ class MolORPredictor(nn.Module):
             * emb_dim is the embedding dimension of the protein sequence
         seq_mask : FloatTensor of shape (B, n_residues)
         node_mask : FloatTensor of shape (B, N)
+        edge_feats : (Optional) float32 tensor of shape (E, edge_in_feats)
+            * Input edge features.
         Returns
         -------
         FloatTensor of shape (B, n_tasks)
@@ -626,10 +630,9 @@ class MolORPredictor(nn.Module):
         """
         #print(bg)
         #print(feats)
-        node_feats = self.gnn(bg, feats) ## problem causing NaNs is here
+        node_feats = self.gnn(bg, feats) if self.model_encoder == "GCN" else self.gnn(bg, feats, edge_feats) ## problem causing NaNs is here
         #print('node feats')
         #print(node_feats)
-        
         ## feed logits into bg for us to unbatch and index
         ## into correct graphs
         #bg.ndata['logits'] = node_feats
