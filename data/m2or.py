@@ -451,64 +451,6 @@ def esm_embed(sequences, device=torch.device('cuda:0' if torch.cuda.is_available
     print('done embedding sequences')
     return sequence_representations
 
-def esm_embed_2(sequences, device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu'), per_residue = False, random_weights = False, esm_model_version = '650m'):
-    # get the embeddings for a list of sequences. Code is copied from ESM github readme
-    assert isinstance(sequences, list)
-    esm_model, esm_alphabet = setup_esm(random_weights=random_weights, esm_model_version = esm_model_version)
-    batch_converter = esm_alphabet.get_batch_converter()
-    max_seq_len = 705
-    def divide_chunks(l, n):
-        for i in range(0, len(l), n):
-            yield l[i:i + n]
-    if esm_model_version == '650m':
-        dim = 1280
-    else:
-        dim = 2560
-    if per_residue:
-        sequence_representations = torch.zeros(len(sequences), max_seq_len, dim)
-    else:
-        sequence_representations = torch.zeros(len(sequences), dim)
-    sequence_chunks = list(divide_chunks(sequences, 5))
-    count = 0
-    for sequence_chunk in sequence_chunks:
-        data = []
-        for i, sequence in enumerate(sequence_chunk):
-            assert ' ' not in sequence
-            ##Hack: make sure not counting length > 1600 because of a bunch of padding
-            if len(sequence) > 1600 and '<pad>' not in sequence:
-                print('trimming sequence to 1600 amino acids max')
-                sequence = sequence[0:1600]
-            data.append(('protein' + str(i), sequence))
-        batch_labels, batch_strs, batch_tokens = batch_converter(data)
-        batch_lens = (batch_tokens != esm_alphabet.padding_idx).sum(1)
-
-        # Extract per-residue representations (on CPU)
-        with torch.inference_mode():
-            results = esm_model(batch_tokens.to(device), repr_layers=[33], return_contacts=False)
-        token_representations = results["representations"][33]
-        #print(token_representations.shape)
-
-        # Generate per-sequence representations via averaging
-        # NOTE: token 0 is always a beginning-of-sequence token, so the first residue is token 1.
-        #print (batch_lens)
-        if per_residue:
-            for i, tokens_len in enumerate(batch_lens):
-                print(len(sequence_chunk[i]))
-                print(token_representations[i, 1 : -1].shape)
-                print(sequence_representations[count].shape)
-                sequence_representations[count] = token_representations[i, 1 : -1].detach()#.cpu()#.numpy()
-                #sequence_representations.append(token_representations[i, 1 : -1].detach().cpu().numpy())
-                count +=1
-        else:
-            for i, tokens_len in enumerate(batch_lens):
-                sequence_representations[count] = token_representations[i, 1 : tokens_len - 1].mean(0).detach()
-                count +=1
-                #sequence_representations.append(token_representations[i, 1 : tokens_len - 1].mean(0).detach().cpu().numpy())
-    print('done embedding sequences')
-    return sequence_representations
-
-
-
 def get_weight_cols(df, normalize_loss_by_class_imbalance=False):
     ## Presumes df has columns mol_id, seq_id, Responsiveness, and _dataQuality.
     ## For data quality weights:

@@ -2,7 +2,20 @@
 
 This repository contains the source code, plotting notebooks, and training data for the paper '[Mapping the combinatorial coding between olfactory receptors and perception with deep learning](https://www.biorxiv.org/content/10.1101/2024.09.16.613334v1)' (v2 in preparation).
 
-A Zenodo release containing model weights, pre-computed ESM embeddings, and OR activation logits (for both HORDE and M2OR receptor sets) will accompany the v2 release. See `data/datasets/` for the small CSV/FASTA artifacts checked into the repo; large `.pt`/`.pth` artifacts are kept out of git via `.gitignore` and should be downloaded from Zenodo and placed in `data/datasets/`.
+Model weights, training data, and pre-generated HORDE / M2OR OR activation logits are available at:
+
+**[Olfaction model weights and data (Zenodo)](https://zenodo.org/records/13765978)** | **[Google Drive mirror](https://drive.google.com/drive/folders/1cXUZsCH_2hmivVtdcyacZf_A8AZ_tmYN?usp=drive_link)**
+
+The `checkpoints/` folder contains representative weights for the MolOR (odorant–receptor) and GCN (odorant–percept) models, including the upstream MolOR used to generate OR activation features for percept training and the MPNN-encoder variant. The `data/` folder contains canonical pre-generated OR activation logits (weighted/unweighted, HORDE/M2OR) and the null-distribution pickle backing the receptor-specificity analysis. Each subfolder includes its own README with provenance and usage notes.
+
+Both bundles are distributed as `.tar.gz` archives. After downloading, extract them before moving the contents:
+
+```bash
+tar -xzf olfaction_data.tar.gz
+tar -xzf olfaction_checkpoints.tar.gz
+```
+
+Then place the extracted `.pt` files under `data/datasets/` to run the percept ablations.
 
 For an example of running inference with the MolOR model over the HORDE set of receptor sequences (including pseudogene controls), refer to `scripts/generate_OR_predictions_pseudogenes.py`.
 

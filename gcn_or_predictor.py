@@ -206,13 +206,10 @@ class GCNORPredictor(nn.Module):
         """
         node_feats = self.gnn(bg, feats)
         graph_feats = self.readout(bg, node_feats)
-        if add_feats.dim() > 2: #(n_samples, 1, 1280) --> (nsamples, 1280)
-            add_feats = add_feats.squeeze(1)
-        ## Concatenate OR features to graph_feats before prediction
-        
         if add_feats is not None:
+            if add_feats.dim() > 2:  # (n_samples, 1, D) --> (n_samples, D)
+                add_feats = add_feats.squeeze(1)
             graph_feats = torch.cat((graph_feats, add_feats), dim=1)
-        
         return self.predict(graph_feats)
 
 
@@ -345,19 +342,8 @@ class CrossAttention(nn.Module):
         output_vec = torch.cat((protein_vec, mol_vec), dim=1)
         ## concat into output_vector (size: (batch_size, prot_seq_len + node_len))
         # output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1)
-        return output_vec    
-
-        # NOTE: code below does mean aggregation over residue + atoms, before concat
-        # NOTE: below, we're temporarily trying to use the mean of the attended values as the fixed size tensor 
-        """
-        fixed_size_tensor1 = attended_values_tensor1.mean(dim=1) # B x D1
-        fixed_size_tensor2 = attended_values_tensor2.mean(dim=1) # B x D1 (assuming projection to prot dim space)
-        """
-        output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1)
-        ## concat into output_vector (size: (batch_size, prot_seq_len + node_len))
-        # output_vec = torch.cat((fixed_size_tensor1, fixed_size_tensor2), dim=1) # now the output_vec is size (1, 2* D1)
         return output_vec
-    
+
 class OdorantReceptorCrossAttention(nn.Module):
     
     """Cross-Attention Block of ligand-protein model, that takes in two 2d tensors for the molecular and protein embeddings, collapses them to the same

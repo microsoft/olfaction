@@ -40,7 +40,7 @@ def init_featurizer(args):
         from dgllife.utils import AttentiveFPAtomFeaturizer
         args['node_featurizer'] = AttentiveFPAtomFeaturizer()
     else:
-        return ValueError(
+        raise ValueError(
             "Expect featurizer_type to be in ['canonical', 'attentivefp'], "
             "got {}".format(args['featurizer_type']))
 
@@ -175,7 +175,7 @@ def split_dataset(args, dataset):
         val_indices, test_indices = orig_test_indices[rel_val_indices], orig_test_indices[rel_test_indices]        
         train_set, val_set, test_set = Subset(dataset, train_indices), Subset(dataset, val_indices), Subset(dataset, test_indices)
     else:
-        return ValueError("Expect the splitting method to be 'scaffold', got {}".format(args['split']))
+        raise ValueError("Expect the splitting method to be 'scaffold', got {}".format(args['split']))
 
     return train_set, val_set, test_set
 
@@ -206,8 +206,8 @@ def get_configure(model, featurizer_type, dataset):
         file_path = os.path.join(ROOT_DIR, file_path)
         print(file_path)
         if not os.path.isfile(file_path):
-            return NotImplementedError('Model {} on dataset {} with featurization {} has not been '
-                                       'supported'.format(model, dataset, featurizer_type))
+            raise NotImplementedError('Model {} on dataset {} with featurization {} has not been '
+                                      'supported'.format(model, dataset, featurizer_type))
         with open(file_path, 'r') as f:
             config = json.load(f)
         print(config)
@@ -458,10 +458,10 @@ def load_model(exp_configure):
             predictor_dropout=exp_configure['dropout']
         )
     else:
-        return ValueError("Expect model to be from ['GCN', 'GAT', 'Weave', 'MPNN', 'AttentiveFP', "
-                          "'gin_supervised_contextpred', 'gin_supervised_infomax', "
-                          "'gin_supervised_edgepred', 'gin_supervised_masking'], 'NF'"
-                          "got {}".format(exp_configure['model']))
+        raise ValueError("Expect model to be from ['GCN', 'GAT', 'Weave', 'MPNN', 'AttentiveFP', "
+                         "'gin_supervised_contextpred', 'gin_supervised_infomax', "
+                         "'gin_supervised_edgepred', 'gin_supervised_masking'], 'NF'"
+                         "got {}".format(exp_configure['model']))
 
     return model
 

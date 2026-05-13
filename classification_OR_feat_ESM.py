@@ -10,7 +10,7 @@ from dgllife.utils import EarlyStopping, Meter, SMILESToBigraph
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
-from utils import collate_molgraphs, load_model, predict, predict_OR_feat
+from utils import collate_molgraphs, load_model, predict, predict_OR_feat, ROOT_DIR
 
 def run_a_train_epoch(args, epoch, model, OR_logits, data_loader, loss_criterion, optimizer, metric = None):
     model.train()
@@ -255,10 +255,10 @@ def main(args, exp_config, dataset, train_set, val_set, test_set):
     elif args['OR_database'] == 'HORDE':
         if args['prev_model_loss'] == 'unweighted_loss':
             print("Loading logits from model trained on unweighed loss")
-            full_OR_logits = torch.load('/home/seyonec/olfaction/data/datasets/olfactory_subgenome_OR_logits.pt')
+            full_OR_logits = torch.load(os.path.join(ROOT_DIR, 'data/datasets/olfactory_subgenome_OR_logits.pt'))
         else:
             print("Loading logits from model trained on weighed loss")
-            full_OR_logits = torch.load('/home/seyonec/olfaction/data/datasets/weighted_loss_olfactory_subgenome_OR_logits.pt')
+            full_OR_logits = torch.load(os.path.join(ROOT_DIR, 'data/datasets/weighted_loss_olfactory_subgenome_OR_logits.pt'))
         # Apply class selection first (if provided), then enforce num_OR_logits
         selected = args.get('selected_OR_indices', None)
         if selected is not None:
