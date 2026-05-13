@@ -284,7 +284,6 @@ if __name__ == '__main__':
         args['device'] = device
     else:
         device = torch.device('cpu')
-        torch.cuda.set_device(device)
         args['device'] = device
     seed = args['seed']
     print('SEED NO: ' + str(seed))
